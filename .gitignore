@@ -1,0 +1,21 @@
+# .gitignore
+
+# Common
+.*.sw[nop]
+log/
+*.log
+snapshots/
+tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pytest_cache/
+dist/
+env/
+.env
+*.egg-info
+build/
+uv.lock
