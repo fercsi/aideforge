@@ -1,5 +1,6 @@
 from enum import StrEnum
-from typing import Literal, Annotated
+from typing import Annotated, Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -41,15 +42,3 @@ class LlmError(BaseError):
 class InternalError(BaseError):
     error_code: Literal[ErrorCode.INTERNAL_ERROR] = ErrorCode.INTERNAL_ERROR
     exception_details: str
-
-
-# AnyError = Annotated[
-#    UnknownCommand
-#    | InvalidArgument
-#    | CommandExecutionError
-#    | LlmError
-#    | InternalError,
-#    Field(descriminator="error_code")
-# ]
-#
-# PromptStatus = Annotated[Success | AnyError, Field(descriminator="status")]

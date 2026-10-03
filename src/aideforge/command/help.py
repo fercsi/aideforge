@@ -1,13 +1,16 @@
-__all__ = ["AgentCommand"]
+from argparse import Namespace
 
 from . import (
     BaseCommand,
+    CommandArgumentParser,
     CommandExecutionError,
     CommandOutput,
     CommandResult,
     InvalidArgument,
     Success,
 )
+
+__all__ = ["AgentCommand"]
 
 # TODO: make help text "editable"
 _HELP_TEXT = """
@@ -28,7 +31,7 @@ class HelpCommand(BaseCommand):
         "Prints general help information or information about commands"
     )
 
-    def setup(self, parser, **kwargs) -> None:
+    def setup(self, parser: CommandArgumentParser, **kwargs) -> None:
         parser.add_argument(
             "command_name",
             nargs="?",
@@ -42,7 +45,7 @@ class HelpCommand(BaseCommand):
             help="Subommand's name",
         )
 
-    def execute(self, args) -> CommandResult:
+    def execute(self, args: Namespace) -> CommandResult:
         command = args.command_name
         subcommand = args.subcommand_name
         commands = self._assistant.command_executor.commands

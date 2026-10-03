@@ -1,41 +1,56 @@
-__all__ = ["Assistant", "PromptError", "PromptResult"]
-
 import re
 import shlex
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Type
+from typing import Annotated, Literal
+
+from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel, Field
 
-from .agent import Agent, LlmResponse, LlmError
-from .command import BaseCommand, CommandExecutor, CommandSuccess, CommandError, default_commands
+from .agent import Agent, AgentRuntime, LlmResponse, LlmError
+from .command import (
+    BaseCommand,
+    CommandExecutor,
+    CommandSuccess,
+    CommandError,
+    default_commands,
+)
 
-PromptError = Annotated[CommandError|LlmError, Field(descriminator="err_code")]
+__all__ = ["Assistant", "PromptError", "PromptResult"]
 
-PromptResult = Annotated[
-    LlmResponse | CommandSuccess | PromptError,
-    Field(descriminator="status")
+PromptError = Annotated[
+    CommandError | LlmError, Field(descriminator="err_code")
 ]
 
+PromptResult = Annotated[
+    LlmResponse | CommandSuccess | PromptError, Field(descriminator="status")
+]
+
+
 class Assistant:
-    """AI agent and chat manager
-    """
-    def __init__(self,
+    """AI agent and chat manager"""
+
+    def __init__(
+        self,
         *,
         model: str,
-        model_provider: str|None=None,
-        model_parameters: dict[str, str|int|float|None]|None=None,
+        model_provider: str | None = None,
+        model_parameters: dict[str, str | int | float | None] | None = None,
         agents: list[Agent] | None = None,
-        default_agent: str | None = None, # first agent by default
-        callbacks=None,
+        default_agent: str | None = None,  # first agent by default
+        callbacks: BaseCallbackHandler
+        | list[BaseCallbackHandler]
+        | None = None,
     ):
         agents = agents or [Agent()]
         self.agent_templates = {}
         for agent in agents:
             if agent.name in self.agent_templates:
-                raise ValueError(f"Multiple agents added with the name '{agent.name}'.")
+                raise ValueError(
+                    f"Multiple agents added with the name '{agent.name}'."
+                )
             self.agent_templates[agent.name] = agent
         self._agents = {}
         self.current_agent_name = default_agent or agents[0].name
@@ -46,7 +61,7 @@ class Assistant:
         if model_provider is None:
             if ":" not in model:
                 raise ValueError("Model provider is missing")
-            self._model_provider, self._model = model.lower().split(':', 1)
+            self._model_provider, self._model = model.lower().split(":", 1)
         else:
             self._model_provider = model_provider.lower()
             self._model = model.lower()
@@ -56,10 +71,12 @@ class Assistant:
         self.register_commands(default_commands)
         self._start_new_session()
 
-    def _start_new_session(self):
+    def _start_new_session(self) -> None:
         self.session_id = str(uuid.uuid4())
 
-    def set_callbacks(self, callbacks):
+    def set_callbacks(
+        self, callbacks: BaseCallbackHandler | list[BaseCallbackHandler]
+    ) -> None:
         if isinstance(callbacks, list):
             callbacks = callbacks.copy()
         else:
@@ -71,8 +88,7 @@ class Assistant:
         else:
             self._prompt_config["callbacks"].extend(callbacks)
 
-
-    def _get_current_agent(self):
+    def _get_current_agent(self) -> AgentRuntime:
         name = self.current_agent_name
         if name not in self._agents:
             agent_template = self.agent_templates.get(name, None)
@@ -89,7 +105,7 @@ class Assistant:
 
     async def process_prompt(self, prompt: str) -> PromptResult:
         prompt = prompt.strip()
-        if prompt.startswith('/'):
+        if prompt.startswith("/"):
             return self._process_command(prompt)
 
         agent = self._get_current_agent()
@@ -99,18 +115,17 @@ class Assistant:
         )
         return result
 
-    def register_commands(self, commands: list[Type[BaseCommand]]) -> None:
+    def register_commands(self, commands: list[type[BaseCommand]]) -> None:
         for command in commands:
             self.command_executor.register_command(command)
 
-    def _process_command(self, prompt:str) -> PromptResult:
+    def _process_command(self, prompt: str) -> PromptResult:
         parts = shlex.split(prompt[1:])
-#>        parts = prompt[1:].split() # TODO strings and stuff
         command = parts[0] if parts else ""
         args = parts[1:]
         return self.command_executor.execute_command(command, args)
 
-    def eval_prompt_string(self, template):
+    def eval_prompt_string(self, template: str) -> str:
         ps = template.replace("{{", "\0").replace("}}", "\1")
 
         ps = re.sub(
@@ -121,7 +136,7 @@ class Assistant:
 
         return ps.replace("\0", "{").replace("\1", "}")
 
-    def _ps_replacer(self, var):
+    def _ps_replacer(self, var: str) -> str:
         # {agent}           default
         # {model}           gpt-4o
         # {model_provider}  openai
@@ -141,9 +156,9 @@ class Assistant:
         if var == "agent":
             return self.current_agent_name
 #>        if var == "model":
-#>            agent = self._get_current_agent() 
+#>            agent = self._get_current_agent()
 #>        if var == "model_provider"
-        if var == "time": # local time, ISO format
+        if var == "time":  # local time, ISO format
             if fmt == "hms":
                 return datetime.now().strftime("%H:%M:%S")
             else:
@@ -153,7 +168,7 @@ class Assistant:
                 return datetime.now().strftime("%m-%d")
             else:
                 return datetime.now().strftime("%Y:%m:%d")
-
+        raise ValueError("Unknown prompt string variable '{var}'")
 
     def stop_processing(self) -> None:
         pass

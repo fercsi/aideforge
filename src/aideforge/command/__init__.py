@@ -1,4 +1,26 @@
-__all__ = (
+from __future__ import annotations
+
+import argparse
+import importlib
+import inspect
+import re
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Annotated, Any, Literal, Self, TYPE_CHECKING
+
+from pydantic import BaseModel, Field
+
+from aideforge.status import (
+    UnknownCommand,
+    InvalidArgument,
+    CommandExecutionError,
+    Success,
+)
+
+if TYPE_CHECKING:
+    from aideforge.assistant import Assistant
+
+__all__ = [
     "BaseCommand",
     "CommandError",
     "CommandExecutor",
@@ -7,23 +29,7 @@ __all__ = (
     "CommandSuccess",
     "ExitAssistant",
     "default_commands",
-)
-
-import argparse
-import importlib
-import inspect
-import re
-from collections.abc import Sequence
-from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import Annotated, Any, Literal, Self, Type
-
-from aideforge.status import (
-    UnknownCommand,
-    InvalidArgument,
-    CommandExecutionError,
-    Success,
-)
+]
 
 
 class ExitAssistant(BaseModel):
@@ -50,13 +56,13 @@ CommandResult = Annotated[
 
 
 class CommandArgumentError(BaseException):
-    def __init__(self, message):
+    def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
 
 
 class CommandArgumentParser(argparse.ArgumentParser):
-    def __init__(self, *args: Any, **kwargs: Any):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs.setdefault("add_help", False)
         super().__init__(*args, **kwargs)
 
@@ -66,7 +72,7 @@ class CommandArgumentParser(argparse.ArgumentParser):
         kwargs.setdefault("help", "%(choices)s")
         return super().add_subparsers(*args, **kwargs)
 
-    def error(self, message):
+    def error(self, message: str) -> None:
         raise CommandArgumentError(message)
 
 
@@ -74,7 +80,7 @@ class BaseCommand:
     name: str
     description: str
 
-    def __init__(self, assistant):
+    def __init__(self, assistant: Assistant) -> None:
         self._assistant = assistant
         self.parser = CommandArgumentParser(
             prog="/" + self.name,
@@ -84,7 +90,9 @@ class BaseCommand:
         self.subparsers = {}
         self.setup(parser=self.parser, subparsers=self.subparsers)
 
-    def parse_args(self, args: Sequence[str]) -> argparse.Namespace:
+    def parse_args(
+        self, args: Sequence[str]
+    ) -> tuple[argparse.Namespace | None, CommandArgumentError | None]:
         try:
             args = self.parser.parse_args(args)
         except CommandArgumentError as exc:
@@ -103,11 +111,11 @@ class BaseCommand:
 
 
 class CommandExecutor:
-    def __init__(self, assistant):
+    def __init__(self, assistant: Assistant) -> None:
         self.commands: dict[str, BaseCommand] = {}
         self._assistant = assistant
 
-    def register_command(self, command_cls: Type[BaseCommand]) -> None:
+    def register_command(self, command_cls: type[BaseCommand]) -> None:
         """Register a command class using its name attribute."""
         if not hasattr(command_cls, "name") or not command_cls.name:
             raise ValueError(
@@ -136,7 +144,7 @@ class CommandExecutor:
             return CommandExecutionError(error_message=str(exc))
 
 
-def _import_commands() -> list[BaseCommand]:
+def _import_commands() -> list[type[BaseCommand]]:
     commands = []
 
     current_file = Path(__file__).resolve()

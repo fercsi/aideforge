@@ -1,13 +1,5 @@
 # TODO decanonize/canonize model name?
-__all__ = [
-    "Agent",
-    "AgentRuntime",
-    "BaseTool",
-    "Content",
-    "ContextConfig",
-    "LlmResponse",
-    "LlmError",
-]
+from __future__ import annotations
 
 import io
 import json
@@ -17,7 +9,6 @@ import warnings
 from contextlib import redirect_stderr
 from dataclasses import dataclass, replace
 from pathlib import Path
-from pydantic import BaseModel
 from typing import Any, Callable, Literal
 
 # supress warnings
@@ -28,9 +19,22 @@ from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, SystemMessage, trim_messages
 from langchain.tools import BaseTool
+from langchain_core.language_models import BaseLanguageModel
+from pydantic import BaseModel
+
 
 from .status import LlmError
 from .tool import ConfigurableTool
+
+__all__ = [
+    "Agent",
+    "AgentRuntime",
+    "BaseTool",
+    "Content",
+    "ContextConfig",
+    "LlmResponse",
+    "LlmError",
+]
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are my AI assistant that has no access to any tools. "
@@ -74,7 +78,9 @@ class LlmResponse(BaseModel):
 
 
 class AgentRuntime:
-    def __init__(self, setup, info, template):
+    def __init__(
+        self, setup: dict[str, Any], info: dict[str, Any], template: Agent
+    ) -> None:
         self._setup = setup
         self._info = info
         self._template = template
@@ -121,7 +127,7 @@ class AgentRuntime:
                 err_msg = str(exc)
             return LlmError(error_message=err_msg)
 
-    def get(info_id:str) -> Any:
+    def get(self, info_id: str) -> Any:
         if info_id in self._info:
             return self._info[info_id]
         if info_id in self._setup:
@@ -148,7 +154,7 @@ class Agent:
     # hooks
     # TODO tool control?
 
-    def __init__(self, setup: dict["str", Any] | None = None):
+    def __init__(self, setup: dict[str, Any] | None = None) -> None:
         # TODO: setup from description
         # tool: { webtool: {rights: "", config:...} }
         self.tools = self.tools.copy()
@@ -201,7 +207,7 @@ class Agent:
         }
         return AgentRuntime(setup, info, self)
 
-    def _create_system_message(self, setup) -> SystemMessage:
+    def _create_system_message(self, setup: dict[str, Any]) -> SystemMessage:
         context_config = setup["context_config"]
         system_prompt = self.system_prompt
         resources = self.resources
@@ -226,7 +232,7 @@ class Agent:
                 )
         return SystemMessage(system_prompt)
 
-    def _init_context_config(self, setup) -> ContextConfig:
+    def _init_context_config(self, setup: dict[str, Any]) -> ContextConfig:
         cfg = replace(self.context_config)  # create a copy
         model = setup["model"]
         max_input_tokens = model.profile["max_input_tokens"]
@@ -252,7 +258,11 @@ class Agent:
         return cfg
 
 
-def _get_model(model, model_provider, model_parameters):
+def _get_model(
+    model: str | None,
+    model_provider: str | None,
+    model_parameters: dict[str, Any] | None,
+) -> Any:
     global _models_in_use
     if model is None:
         return None
@@ -272,7 +282,7 @@ def _get_model(model, model_provider, model_parameters):
 _models_in_use = {}
 
 
-def _get_token_count(model, text: str) -> int:
+def _get_token_count(model: BaseLanguageModel, text: str) -> int:
     stderr_buffer = io.StringIO()
     with warnings.catch_warnings(record=True) as captured_warnings:
         warnings.simplefilter("always")

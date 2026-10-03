@@ -41,3 +41,8 @@ ollama = [
 [project.urls]
 "Homepage" = "https://github.com/fercsi/aideforge"
 "Bug Tracker" = "https://github.com/fercsi/aideforge/issues"
+
+[tool.black]
+line-length = 80
+target-version = ['py311']
+quiet = true

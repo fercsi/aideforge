@@ -1,3 +1,7 @@
+from typing import Any
+
+from pydantic import BaseModel, Field
+
 __all__ = [
     "ColorTheme",
     "Theme",
@@ -9,10 +13,10 @@ __all__ = [
     "to_web_colors",
 ]
 
-from pydantic import BaseModel, Field
-
 ColorValue = int | str | None
 ColorType = ColorValue | tuple[ColorValue, ColorValue]
+WebColorValue = str | None
+WebColorType = WebColorValue | tuple[WebColorValue, WebColorValue]
 
 
 class ColorTheme(BaseModel):
@@ -55,7 +59,7 @@ class DefaultTheme(Theme):
     colors: ColorTheme = Field(default_factory=DefaultColorTheme)
 
 
-def to_term_color(color: ColorType, *, background=False):
+def to_term_color(color: ColorType, *, background: bool = False) -> str | None:
     if color is None:
         return None
     if isinstance(color, (tuple, list)):
@@ -93,7 +97,7 @@ def to_term_colors(colors: ColorTheme) -> ColorTheme:
     return colors
 
 
-def to_web_color(color: ColorType, *, background=False):
+def to_web_color(color: ColorType, *, background: bool = False) -> WebColorType:
     if color is None:
         return None
     if isinstance(color, (tuple, list)):
@@ -103,30 +107,30 @@ def to_web_color(color: ColorType, *, background=False):
 
     try:
         if isinstance(color, int):
-            if not 0 <= index <= 255:
+            if not 0 <= color <= 255:
                 raise ValueError("index must be between 0 and 255")
 
             # ANSI base colors
-            if index < 16:
-                r = 1 if index & 1 else 0
-                g = 1 if index & 2 else 0
-                b = 1 if index & 4 else 0
+            if color < 16:
+                r = 1 if color & 1 else 0
+                g = 1 if color & 2 else 0
+                b = 1 if color & 4 else 0
 
-                value = 255 if index >= 8 else 128
+                value = 255 if color >= 8 else 128
 
                 return f"#{r * value:02x}{g * value:02x}{b * value:02x}"
 
             # 6x6x6 color cube
-            if index < 232:
-                index -= 16
-                r, index = divmod(index, 36)
-                g, b = divmod(index, 6)
+            if color < 232:
+                color -= 16
+                r, color = divmod(color, 36)
+                g, b = divmod(color, 6)
 
                 values = (0, 95, 135, 175, 215, 255)
                 return f"#{values[r]:02x}{values[g]:02x}{values[b]:02x}"
 
             # Grayscale
-            value = 8 + (index - 232) * 10
+            value = 8 + (color - 232) * 10
             return f"#{value:02x}{value:02x}{value:02x}"
 
         if isinstance(color, str) and len(color) == 7 and color[0] == "#":

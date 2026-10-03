@@ -1,13 +1,14 @@
-__all__ = ["AsyncTool", "ConfigurableTool"]
-
 import asyncio
 import importlib
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
-from langchain.tools import BaseTool
 from pathlib import Path
 from typing import Any
+
+from langchain.tools import BaseTool
+
+__all__ = ["AsyncTool", "ConfigurableTool"]
 
 
 @dataclass
@@ -38,7 +39,7 @@ class AsyncTool(BaseTool):
         return asyncio.run(self._arun(*args, **kwargs))
 
 
-def _import_tools() -> list[BaseTool]:
+def _import_tools() -> list[type[BaseTool]]:
     tools = []
 
     current_file = Path(__file__).resolve()
