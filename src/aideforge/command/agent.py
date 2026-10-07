@@ -15,6 +15,22 @@ __all__ = ["AgentCommand"]
 
 
 class AgentCommand(BaseCommand):
+    """Command for performing agent-related operations.
+
+    Provided sub-commands:
+
+    - **list**: Lists all available agents
+    - **use**: Selects which aget to use from now
+    - **swap**: Swaps current agent with the last one
+
+    Attributes
+    ----------
+    name : str
+        The command name (``"agent"``).
+    description : str
+        A short description of the command.
+    """
+
     name: str = "agent"
     description: str = "Perform agent related operations"
 
@@ -24,6 +40,19 @@ class AgentCommand(BaseCommand):
         subparsers: dict[str, CommandArgumentParser],
         **kwargs,
     ) -> None:
+        """Configure the argument parser with ``list``, ``use`` and ``swap``
+        sub-commands.
+
+        Parameters
+        ----------
+        parser : CommandArgumentParser
+            The main argument parser for the command.
+        subparsers : dict[str, CommandArgumentParser]
+            A dictionary to populate with sub-parsers keyed by sub-command
+            name.
+        **kwargs : Any
+            For ignored, additional keyword arguments.
+        """
         parser_group = parser.add_subparsers()
 
         subparser = parser_group.add_parser(
@@ -50,12 +79,39 @@ class AgentCommand(BaseCommand):
         self._last_agent_name = None
 
     def list(self, args: Namespace) -> CommandResult:
+        """List all available agents.
+
+        Parameters
+        ----------
+        args : Namespace
+            Parsed arguments (unused by this sub-command).
+
+        Returns
+        -------
+        CommandResult
+            A :class:`CommandOutput` containing a newline-separated list
+            of agent names, with the current agent marked by a check mark.
+        """
         agent_names = sorted(self._assistant.agent_templates)
         c = self._assistant.current_agent_name
         agent_names = [f"✓ {a}" if a == c else f"  {a}" for a in agent_names]
         return CommandOutput(content="\n".join(agent_names) + "\n")
 
     def use(self, args: Namespace) -> CommandResult:
+        """Select an agent to use as the current agent.
+
+        Parameters
+        ----------
+        args : Namespace
+            Parsed arguments containing the ``agent_name`` attribute
+            specifying which agent to switch to.
+
+        Returns
+        -------
+        CommandResult
+            A :class:`Success` result if the agent was switched, or an
+            :class:`InvalidArgument` error if the agent name is unknown.
+        """
         name = args.agent_name
         if name not in self._assistant.agent_templates:
             return InvalidArgument(f"Unknown agent '{name}'")
@@ -64,6 +120,19 @@ class AgentCommand(BaseCommand):
         return Success()
 
     def swap(self, args: Namespace) -> CommandResult:
+        """Swap the current agent with the previously used one.
+
+        Parameters
+        ----------
+        args : Namespace
+            Parsed arguments (unused by this sub-command).
+
+        Returns
+        -------
+        CommandResult
+            A :class:`Success` result. If no previous agent exists, the
+            current agent remains unchanged.
+        """
         # TODO: if only two agents, just swap
         if self._last_agent_name is None:
             return Success()

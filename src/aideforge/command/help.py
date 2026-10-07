@@ -26,12 +26,39 @@ Use "/help COMMAND" to get more details.
 
 
 class HelpCommand(BaseCommand):
+    """Command that prints general help or information about specific commands.
+
+    When called without arguments, prints a general help message listing
+    all registered commands. When called with a command name, prints that
+    command's help text. When called with both a command and subcommand
+    name, prints the subcommand's help text.
+
+    Attributes
+    ----------
+    name : str
+        The command name (``"help"``).
+    description : str
+        A short description of the command.
+    """
+
     name: str = "help"
     description: str = (
         "Prints general help information or information about commands"
     )
 
     def setup(self, parser: CommandArgumentParser, **kwargs) -> None:
+        """Configure the argument parser for the help command.
+
+        Adds optional positional arguments for the command name and
+        subcommand name.
+
+        Parameters
+        ----------
+        parser : CommandArgumentParser
+            The argument parser to configure.
+        **kwargs : Any
+            For ignored, additional keyword arguments.
+        """
         parser.add_argument(
             "command_name",
             nargs="?",
@@ -46,6 +73,21 @@ class HelpCommand(BaseCommand):
         )
 
     def execute(self, args: Namespace) -> CommandResult:
+        """Print help for a command, subcommand, or general help.
+
+        Parameters
+        ----------
+        args : Namespace
+            Parsed arguments containing optional ``command_name`` and
+            ``subcommand_name`` attributes.
+
+        Returns
+        -------
+        CommandResult
+            A :class:`CommandOutput` containing the help text, or an
+            :class:`InvalidArgument` error if the command or subcommand
+            does not exist.
+        """
         command = args.command_name
         subcommand = args.subcommand_name
         commands = self._assistant.command_executor.commands

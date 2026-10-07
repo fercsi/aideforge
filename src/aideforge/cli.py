@@ -14,12 +14,43 @@ __all__ = ["Cli", "HistoryConfig"]
 
 
 class CliCallbackHandler(BaseCallbackHandler):
+    """Callback handler for printing LLM events to the terminal.
+
+    Prints colorized information about LLM completions, tool calls, and
+    errors using the colors from the configured theme.
+
+    Parameters
+    ----------
+    theme : Theme
+        The theme providing color definitions for terminal output.
+    """
+
     def __init__(self, theme: Theme) -> None:
+        """Initialize the callback handler with a theme.
+
+        Parameters
+        ----------
+        theme : Theme
+            The theme providing color definitions for terminal output.
+        """
         super().__init__()
         self._theme = theme
         self._colors = to_term_colors(theme.colors)
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        """Handle the end-of-LLM-call event by printing colorized output.
+
+        Prints the message ID and type, any reasoning content, and tool
+        calls for each generation in the response.
+
+        Parameters
+        ----------
+        response : LLMResult
+            The result object returned by the LLM, containing one or more
+            generations.
+        **kwargs : Any
+            Additional keyword arguments passed by the callback framework.
+        """
         color = self._colors.thinking
         color_em = self._colors.thinking_em
         for gen in response.generations[0]:  # currently, no multiple prompts
@@ -36,6 +67,17 @@ class CliCallbackHandler(BaseCallbackHandler):
                 _color_print(color, f"    [{tc['id']}] {tc['name']}({args})")
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> None:
+        """Handle the end-of-tool-execution event by printing colorized output.
+
+        Prints the tool call ID, output type/name, and limited content.
+
+        Parameters
+        ----------
+        output : Any
+            The output produced by the tool.
+        **kwargs : Any
+            Additional keyword arguments passed by the callback framework.
+        """
         color = self._colors.thinking
         color_em = self._colors.thinking_em
         _color_print(
@@ -45,17 +87,58 @@ class CliCallbackHandler(BaseCallbackHandler):
         _color_print(color, output.content, max_lines=3, indent=2)
 
     def on_llm_error(self, exception: BaseException, **kwargs: Any) -> None:
+        """Handle LLM errors by printing the exception and context.
+
+        Parameters
+        ----------
+        exception : BaseException
+            The exception raised by the LLM call.
+        **kwargs : Any
+            Additional keyword arguments passed by the callback framework.
+        """
         print(exception)
         print(kwargs)
 
 
 @dataclass
 class HistoryConfig:
+    """Configuration for the readline command history.
+
+    Attributes
+    ----------
+    path : str or None, optional
+        File path to persist/read command history from. If ``None``,
+        history is not persisted to disk.
+    size : int or None, optional
+        Maximum number of history entries to keep. If ``None``, the
+        readline default is used.
+    """
+
     path: str | None = None
     size: int | None = 1000
 
 
 class Cli:
+    """Command-line interface for interacting with an :class:`Assistant`.
+
+    Provides an interactive REPL loop that reads user input, dispatches
+    it to the assistant, and prints the response using the configured theme.
+
+    Parameters
+    ----------
+    assistant : Assistant
+        The assistant instance used to process prompts and commands.
+    theme : Theme, optional
+        The theme for terminal colors and prompt strings, by default
+        :class:`DefaultTheme`.
+    history_config : HistoryConfig, optional
+        Configuration for command history persistence, by default
+        :class:`HistoryConfig`.
+    callback_handler : Type[BaseCallbackHandler], optional
+        The callback handler class to use for observing LLM execution,
+        by default :class:`CliCallbackHandler`.
+    """
+
     def __init__(
         self,
         *,
@@ -64,12 +147,37 @@ class Cli:
         history_config: HistoryConfig = HistoryConfig(),
         callback_handler: Type[BaseCallbackHandler] = CliCallbackHandler,
     ) -> None:
+        """Initialize the CLI with an assistant and configuration.
+
+        Parameters
+        ----------
+        assistant : Assistant
+            The assistant instance used to process prompts and commands.
+        theme : Theme, optional
+            The theme for terminal colors and prompt strings, by default
+            :class:`DefaultTheme`.
+        history_config : HistoryConfig, optional
+            Configuration for command history persistence, by default
+            :class:`HistoryConfig`.
+        callback_handler : Type[BaseCallbackHandler], optional
+            The callback handler class to use for observing LLM execution,
+            by default :class:`CliCallbackHandler`.
+        """
         self._assistant = assistant
         self._assistant.set_callbacks(callback_handler(theme=theme))
         self._theme = theme
         self._history_config = history_config
 
     async def run(self) -> None:
+        """Run the interactive CLI loop.
+
+        Reads user input from the terminal, displays the prompt string
+        from the theme, and processes each input line via the assistant.
+        History is persisted to disk if a history path is configured.
+
+        The loop terminates on ``EOFError``, ``KeyboardInterrupt``, or
+        when the assistant returns an ``"exit"`` status.
+        """
         hist_cfg = self._history_config
         theme = self._theme
         colors = to_term_colors(theme.colors)
@@ -136,6 +244,33 @@ def _color_print(
     indent: int = 0,
     **kwargs: Any,
 ) -> None:
+    """Print text to the terminal with an optional color prefix.
+
+    Parameters
+    ----------
+    color : str
+        The ANSI escape sequence for the desired color. Pass an empty string
+        for no color.
+    *args : Any
+        Positional arguments passed to :func:`print`.
+    smart_end : str or None, optional
+        If provided, appends this string to the output only if the last
+        positional argument does not already end with it, by default
+        ``None``.
+    max_lines : int or None, optional
+        If provided, truncates the output to this many lines, by default
+        ``None``. (Currently unused — reserved for future use.)
+    indent : int, optional
+        Number of two-space indentation units to add, by default ``0``.
+        (Currently unused — reserved for future use.)
+    **kwargs : Any
+        Additional keyword arguments passed to :func:`print`.
+
+    Notes
+    -----
+    The color escape sequence is printed before the content and reset
+    after, unless *color* is an empty string.
+    """
     if smart_end:
         if not isinstance(args[-1], str) or not args[-1].endswith(smart_end):
             kwargs["end"] = smart_end
@@ -148,11 +283,25 @@ def _color_print(
 
 
 def _set_color(color: str) -> None:
+    """Print a color escape sequence without a newline.
+
+    Parameters
+    ----------
+    color : str
+        The ANSI escape sequence to print. If empty, nothing is printed.
+    """
     if color:
         print(color, end="")
 
 
 def _reset_color(color: str) -> None:
-    # sets color removal if color has been set previously
+    """Reset the terminal color if a color was previously set.
+
+    Parameters
+    ----------
+    color : str
+        The color escape sequence that was previously set. If non-empty,
+        the ANSI reset sequence is printed.
+    """
     if color:  # not None or ""
         print("\x1b[0m", end="")

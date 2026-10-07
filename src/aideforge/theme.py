@@ -20,8 +20,34 @@ WebColorType = WebColorValue | tuple[WebColorValue, WebColorValue]
 
 
 class ColorTheme(BaseModel):
-    # number: 0..255
-    # str: "#xxxxxx"
+    """Color configuration for different parts of the terminal interface.
+
+    Each attribute accepts a number (0..255 for 16 or 256-color palette),
+    an ANSI color string (``"#rrggbb"`` format), or ``None`` for no color.
+    A tuple pairs a foreground color with a background color, single value
+    refers to a forground color (like ``(color, None)``).
+
+    Attributes
+    ----------
+    prompt_string : ColorType, optional
+        Color for the prompt string.
+    input : ColorType, optional
+        Color for user input text/prompt.
+    thinking : ColorType, optional
+        Color for the assistant's thinking output.
+    thinking_em : ColorType, optional
+        Color for emphasized thinking text.
+    response : ColorType, optional
+        Color for the assistant's response text.
+    output : ColorType, optional
+        Color for general output (e.g. command) text.
+    output_error : ColorType, optional
+        Color for error output text.
+    warning : ColorType, optional
+        Color for application level warning messages.
+    error : ColorType, optional
+        Color for application level error messages.
+    """
     # Input
     prompt_string: ColorType = None
     input: ColorType = None
@@ -38,15 +64,38 @@ class ColorTheme(BaseModel):
 
 
 class Theme(BaseModel):
+    """Top-level theme configuration for the CLI.
+
+    Attributes
+    ----------
+    prompt_string : str or None, optional
+        A template for the prompt string. May contain placeholders such as
+        ``{agent}`` and ``{model}``.
+    colors : ColorTheme, optional
+        The color theme to apply. Defaults to a :class:`ColorTheme` instance
+        with all colors set to ``None``.
+    """
+
     prompt_string: str | None = None
     colors: ColorTheme = Field(default_factory=ColorTheme)
 
 
 class MonochromeTheme(ColorTheme):
+    """A monochrome (color-less) color theme.
+
+    Attributes
+    ----------
+    prompt_string : str or None, optional
+        A template for the prompt string, showing the agent name.
+    """
+
     prompt_string: str | None = "[{agent}]> "
 
 
 class DefaultColorTheme(ColorTheme):
+    """The default 16-color terminal color theme.
+    """
+
     thinking: ColorType = 8
     thinking_em: ColorType = 7
     response: ColorType = 11
@@ -55,11 +104,37 @@ class DefaultColorTheme(ColorTheme):
 
 
 class DefaultTheme(Theme):
+    """The default complete theme (prompt template + terminal colors).
+    """
+
     prompt_string: str | None = "[{agent}]> "
     colors: ColorTheme = Field(default_factory=DefaultColorTheme)
 
 
 def to_term_color(color: ColorType, *, background: bool = False) -> str | None:
+    """Convert a color value to a terminal escape sequence.
+
+    Parameters
+    ----------
+    color : ColorType
+        The color value to convert. May be an ANSI index (0..255),
+        a hex string (``"#rrggbb"``), a tuple of ``(foreground, background)``,
+        or ``None``.
+    background : bool, optional
+        Whether to emit the color as a background color, by default ``False``.
+
+    Returns
+    -------
+    str or None
+        The ANSI escape sequence as a string, or ``None`` if *color* is
+        ``None``. For tuple inputs, the combined foreground/background
+        sequence is returned.
+
+    Raises
+    ------
+    ValueError
+        If *color* is not a valid color value.
+    """
     if color is None:
         return None
     if isinstance(color, (tuple, list)):
@@ -90,6 +165,21 @@ def to_term_color(color: ColorType, *, background: bool = False) -> str | None:
 
 
 def to_term_colors(colors: ColorTheme) -> ColorTheme:
+    """Convert all colors in a :class:`ColorTheme` to terminal escape sequences.
+
+    Parameters
+    ----------
+    colors : ColorTheme
+        The color theme whose values should be converted. Each color value
+        is replaced with its terminal escape sequence (or an empty string
+        if the value was ``None``).
+
+    Returns
+    -------
+    ColorTheme
+        A new :class:`ColorTheme` instance (a copy of *colors*) with all
+        values replaced by terminal escape sequences.
+    """
     colors = colors.model_copy()
     for name in colors.model_fields:
         val = getattr(colors, name)
@@ -97,12 +187,31 @@ def to_term_colors(colors: ColorTheme) -> ColorTheme:
     return colors
 
 
-def to_web_color(color: ColorType, *, background: bool = False) -> WebColorType:
+def to_web_color(color: ColorType) -> WebColorType:
+    """Convert a color value to a web-safe hex color string.
+
+    Parameters
+    ----------
+    color : ColorType
+        The color value to convert. May be an ANSI index (0..255), a hex
+        string (``"#rrggbb"``), or a tuple of ``(foreground, background)``.
+
+    Returns
+    -------
+    WebColorType
+        A hex color string (e.g. ``"#rrggbb"``), ``None`` if *color* is
+        ``None``, or a tuple of ``(fg, bg)`` for tuple inputs.
+
+    Raises
+    ------
+    ValueError
+        If *color* is not a valid color value or is out of range.
+    """
     if color is None:
         return None
-    if isinstance(color, (tuple, list)):
+    if isinstance(color, (tuple, list)) and len(color) == 2:
         fg = to_web_color(color[0])
-        bg = to_web_color(color[1], background=True)
+        bg = to_web_color(color[1])
         return (fg, bg)
 
     try:
@@ -135,12 +244,27 @@ def to_web_color(color: ColorType, *, background: bool = False) -> WebColorType:
 
         if isinstance(color, str) and len(color) == 7 and color[0] == "#":
             return color
-        raise ValueError("")
     except:
-        raise ValueError(f"Invalid color value '{color}'")
+        pass
+    raise ValueError(f"Invalid color value '{color}'")
 
 
 def to_web_colors(colors: ColorTheme) -> ColorTheme:
+    """Convert all colors in a :class:`ColorTheme` to web-safe hex strings.
+
+    Parameters
+    ----------
+    colors : ColorTheme
+        The color theme whose values should be converted. Each color value
+        is replaced with its web-safe hex equivalent (or an empty string
+        if the value was ``None``).
+
+    Returns
+    -------
+    ColorTheme
+        A new :class:`ColorTheme` instance (a copy of *colors*) with all
+        values replaced by web-safe hex color strings.
+    """
     colors = colors.model_copy()
     for name in colors.model_fields:
         val = getattr(colors, name)

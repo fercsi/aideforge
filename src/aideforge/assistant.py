@@ -30,7 +30,32 @@ PromptResult = Annotated[
 
 
 class Assistant:
-    """AI agent and chat manager"""
+    """AI agent and chat manager.
+
+    Manages agent templates, model configuration, command execution, and
+    the interactive chat loop. Supports switching between registered agents
+    and processing user prompts (both chat and slash-commands).
+
+    Parameters
+    ----------
+    model : str
+        The model identifier, optionally prefixed with a provider using
+        a colon (e.g. ``"openai:gpt-4o"``). If no provider is included
+        and ``model_provider`` is ``None``, a :class:`ValueError` is raised.
+    model_provider : str or None, optional
+        The model provider name (e.g. ``"openai"``). If ``None``, the
+        provider is parsed from *model* if it contains a colon.
+    model_parameters : dict[str, str | int | float | None] or None, optional
+        Additional parameters for model initialization (e.g. temperature).
+    agents : list[Agent] or None, optional
+        A list of :class:`Agent` templates to register. Defaults to a
+        single default :class:`Agent` if ``None``.
+    default_agent : str or None, optional
+        The name of the agent to use by default. If ``None``, the first
+        agent in the list is used.
+    callbacks : BaseCallbackHandler or list[BaseCallbackHandler] or None, optional
+        Callback handler(s) for observing LLM and tool execution.
+    """
 
     def __init__(
         self,
@@ -72,11 +97,27 @@ class Assistant:
         self._start_new_session()
 
     def _start_new_session(self) -> None:
+        """Generate a new unique session ID.
+
+        This is called on initialization and can be used to reset the
+        session identifier, generating a new UUID.
+        """
         self.session_id = str(uuid.uuid4())
 
     def set_callbacks(
         self, callbacks: BaseCallbackHandler | list[BaseCallbackHandler]
     ) -> None:
+        """Register or extend callback handlers for LLM/tool execution.
+
+        Callbacks are stored in the prompt configuration and applied to
+        every LLM call. If callbacks were already set, new handlers are
+        appended to the existing list.
+
+        Parameters
+        ----------
+        callbacks : BaseCallbackHandler or list[BaseCallbackHandler]
+            One or more callback handlers to register.
+        """
         if isinstance(callbacks, list):
             callbacks = callbacks.copy()
         else:
@@ -89,6 +130,22 @@ class Assistant:
             self._prompt_config["callbacks"].extend(callbacks)
 
     def _get_current_agent(self) -> AgentRuntime:
+        """Retrieve or lazily instantiate the current agent runtime.
+
+        If the current agent has not yet been instantiated, it is created
+        from its template using the assistant's model configuration.
+
+        Returns
+        -------
+        AgentRuntime
+            The runtime instance for the currently selected agent.
+
+        Raises
+        ------
+        KeyError
+            If the current agent name does not correspond to a registered
+            agent template.
+        """
         name = self.current_agent_name
         if name not in self._agents:
             agent_template = self.agent_templates.get(name, None)
@@ -104,6 +161,23 @@ class Assistant:
         return self._agents[name]
 
     async def process_prompt(self, prompt: str) -> PromptResult:
+        """Process a user prompt and return the result.
+
+        If the prompt starts with ``/``, it is treated as a command and
+        dispatched to the command executor. Otherwise, the prompt is sent
+        to the current agent for LLM processing.
+
+        Parameters
+        ----------
+        prompt : str
+            The user's input text. Leading/trailing whitespace is stripped.
+
+        Returns
+        -------
+        PromptResult
+            The result of processing the prompt or command. This may be an
+            LLM's response, command output or an error.
+        """
         prompt = prompt.strip()
         if prompt.startswith("/"):
             return self._process_command(prompt)
@@ -116,16 +190,68 @@ class Assistant:
         return result
 
     def register_commands(self, commands: list[type[BaseCommand]]) -> None:
+        """Register assistant commands
+
+        Parameters
+        ----------
+        commands : list[type[BaseCommand]]
+            A list of commands (subclasses of :class:`BaseCommand`) to
+            register for use as slash-commands.
+        """
         for command in commands:
             self.command_executor.register_command(command)
 
     def _process_command(self, prompt: str) -> PromptResult:
+        """Parse and execute a slash-command from a prompt.
+
+        Processes the prompt in a traditional shell-like manner: the first
+        item is treated as the command, and the remaining items are passed
+        as command arguments.
+
+        Parameters
+        ----------
+        prompt : str
+            The prompt string. The method assumes that the prompt starts
+            with the ``/`` character.
+
+        Returns
+        -------
+        PromptResult
+            The result of the command execution.
+        """
         parts = shlex.split(prompt[1:])
         command = parts[0] if parts else ""
         args = parts[1:]
         return self.command_executor.execute_command(command, args)
 
     def eval_prompt_string(self, template: str) -> str:
+        """Evaluate a prompt string template with runtime values.
+
+        Single-brace placeholders ``{var}`` are replaced with their
+        corresponding runtime values (e.g. ``{agent}``, ``{time:hm}``).
+        Double braces (``{{`` and ``}}``) are preserved as literal braces
+        (``{`` and ``}``) in the output.
+
+        Supported variables include ``{agent}``, ``{model}``,
+        ``{model_provider}``, ``{time:hm}``, ``{time:hms}``,
+        ``{date:md}``, and ``{date:ymd}``.
+
+        Parameters
+        ----------
+        template : str
+            The template string containing placeholders.
+
+        Returns
+        -------
+        str
+            The evaluated prompt string with all supported placeholders
+            replaced.
+
+        Raises
+        ------
+        ValueError
+            If an unknown placeholder variable is encountered.
+        """
         ps = template.replace("{{", "\0").replace("}}", "\1")
 
         ps = re.sub(
@@ -137,11 +263,31 @@ class Assistant:
         return ps.replace("\0", "{").replace("\1", "}")
 
     def _ps_replacer(self, var: str) -> str:
+        """Replace a single prompt-string placeholder variable.
+
+        For supported variables, see :meth:`eval_prompt_string`
+
+        Parameters
+        ----------
+        var : str
+            The variable name extracted from the placeholder. May include
+            a format specifier after a colon (e.g. ``"time:hm"``).
+
+        Returns
+        -------
+        str
+            The replacement value for the placeholder.
+
+        Raises
+        ------
+        ValueError
+            If *var* is not a recognized placeholder.
+        """
         # {agent}           default
         # {model}           gpt-4o
         # {model_provider}  openai
         # {time:hm}         19:35
-        # {time:hmss}       19:35:48
+        # {time:hms}        19:35:48
         # {date:ymd}        2026-09-25
         # {date:md}         09-25
         # {input_sn}        139
@@ -171,4 +317,8 @@ class Assistant:
         raise ValueError("Unknown prompt string variable '{var}'")
 
     def stop_processing(self) -> None:
+        """Stop any ongoing prompt processing.
+
+        Currently disabled.
+        """
         pass
