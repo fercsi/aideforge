@@ -1,5 +1,6 @@
+import traceback
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, Field
 
@@ -112,10 +113,60 @@ class InternalError(BaseError):
     ----------
     error_code : Literal[ErrorCode.INTERNAL_ERROR]
         The specific error code for internal errors.
-    exception_details : str
-        Additional details about the exception, including stack trace
-        information.
+    type : str
+        The exception class name.
+    message : str
+        The exception message (``str(exc)``).
+    args : list[Any]
+        The exception arguments.
+    traceback : list[str] | None
+        The formatted traceback stack lines, if available.
     """
 
     error_code: Literal[ErrorCode.INTERNAL_ERROR] = ErrorCode.INTERNAL_ERROR
-    exception_details: str
+    type: str = Field(..., description="Exception class name")
+    message: str = Field(..., description="Exception message (str(e))")
+    args: list[Any] = Field(
+        default_factory=list, description="Exception arguments"
+    )
+    traceback: list[str] | None = Field(
+        default=None, description="Formatted traceback stack lines"
+    )
+
+    @classmethod
+    def from_exception(
+        cls, exc: BaseException, include_traceback: bool = True
+    ) -> Self:
+        """Create an :class:`InternalError` instance from a :class:`BaseException`.
+
+        Parameters
+        ----------
+        exc : BaseException
+            The exception to convert.
+        include_traceback : bool, optional
+            Whether to include the formatted traceback in the result,
+            by default ``True``.
+
+        Returns
+        -------
+        InternalError
+            An :class:`InternalError` populated with the exception's
+            type, message, args, and (optionally) traceback.
+        """
+        tb_lines = None
+        if include_traceback and exc.__traceback__:
+            tb_lines = traceback.format_exception(
+                type(exc), exc, exc.__traceback__
+            )
+
+        type_name = exc.__class__.__name__
+        return cls(
+            error_message=f"Internal error ({type_name}): {exc}",
+            type=type_name,
+            message=str(exc),
+            args=[
+                str(arg) if isinstance(arg, BaseException) else arg
+                for arg in exc.args
+            ],
+            traceback=tb_lines,
+        )
