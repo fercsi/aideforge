@@ -92,7 +92,7 @@ class AgentCommand(BaseCommand):
             A :class:`CommandOutput` containing a newline-separated list
             of agent names, with the current agent marked by a check mark.
         """
-        agent_names = sorted(self._assistant.agent_templates)
+        agent_names = sorted(self._assistant.agent_blueprints)
         c = self._assistant.current_agent_name
         agent_names = [f"✓ {a}" if a == c else f"  {a}" for a in agent_names]
         return CommandOutput(content="\n".join(agent_names) + "\n")
@@ -113,7 +113,7 @@ class AgentCommand(BaseCommand):
             :class:`InvalidArgument` error if the agent name is unknown.
         """
         name = args.agent_name
-        if name not in self._assistant.agent_templates:
+        if name not in self._assistant.agent_blueprints:
             return InvalidArgument(f"Unknown agent '{name}'")
         self._last_agent_name = self._assistant.current_agent_name
         self._assistant.current_agent_name = name

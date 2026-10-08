@@ -27,7 +27,7 @@ from .status import LlmError
 from .tool import ConfigurableTool
 
 __all__ = [
-    "Agent",
+    "AgentBlueprint",
     "AgentRuntime",
     "BaseTool",
     "Content",
@@ -157,16 +157,19 @@ class AgentRuntime:
     info : dict[str, Any]
         A dictionary of informational metadata about the agent, such as
         ``"model"``, ``"model_provider"``, and ``"model_parameters"``.
-    template : Agent
-        The :class:`Agent` template from which this runtime was instantiated.
+    blueprint : AgentBlueprint
+        The :class:`AgentBlueprint` template from which this runtime was instantiated.
     """
 
     def __init__(
-        self, setup: dict[str, Any], info: dict[str, Any], template: Agent
+        self,
+        setup: dict[str, Any],
+        info: dict[str, Any],
+        blueprint: AgentBlueprint,
     ) -> None:
         self._setup = setup
         self._info = info
-        self._template = template
+        self._blueprint = blueprint
         self._messages = []
         for k, v in setup.items():
             setattr(self, k, v)
@@ -242,7 +245,7 @@ class AgentRuntime:
 
         - **context_config** (``ContextConfig``):
         - **descrition (``str``):
-        - **model** (``str``): 
+        - **model** (``str``):
         - **model_parameters** (``dict[str, Any]``):
         - **model_provider** (``str``):
         - **name** (``str``):
@@ -272,12 +275,12 @@ class AgentRuntime:
             return self._info[info_id]
         if info_id in self._setup:
             return self._setup[info_id]
-        if info_id[0] != "_" and hasattr(self._template, info_id):
-            return getattr(self._template, info_id)
+        if info_id[0] != "_" and hasattr(self._blueprint, info_id):
+            return getattr(self._blueprint, info_id)
         raise KeyError(f"Unknown info ID {info_id}")
 
 
-class Agent:
+class AgentBlueprint:
     """Blueprint for creating and configuring an AI agent.
 
     Defines the agent's identity, model, tools, system prompt, context
@@ -330,7 +333,7 @@ class Agent:
     # TODO tool control?
 
     def __init__(self, setup: dict[str, Any] | None = None) -> None:
-        """Initialize an :class:`Agent` instance.
+        """Initialize an :class:`AgentBlueprint` instance.
 
         Creates copies of mutable class attributes so that each instance
         has its own independent tools and resources lists.
@@ -471,7 +474,9 @@ class Agent:
         max_tokens = context_config.max_prompt_tokens
         # self._context_size = max_tokens # + tool-tokens
         if max_tokens is not None:
-            token_count, is_estimated = _get_token_count(setup["model"], system_prompt)
+            token_count, is_estimated = _get_token_count(
+                setup["model"], system_prompt
+            )
             if token_count > max_tokens:
                 raise ValueError(
                     f"System prompt too long: {token_count} tokens exceed "
@@ -610,8 +615,7 @@ def _get_token_count(model: BaseLanguageModel, text: str) -> tuple[int, bool]:
 
         # Warning if tokens cannot be counted exactly?!
         is_estimated = any(
-            "fallback" in str(w.message)
-            for w in captured_warnings
+            "fallback" in str(w.message) for w in captured_warnings
         )
         # False means:
         return token_count, is_estimated

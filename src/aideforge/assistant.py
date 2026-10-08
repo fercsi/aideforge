@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel, Field
 
-from .agent import Agent, AgentRuntime, LlmResponse, LlmError
+from .agent import AgentBlueprint, AgentRuntime, LlmResponse, LlmError
 from .command import (
     BaseCommand,
     CommandExecutor,
@@ -32,7 +32,7 @@ PromptResult = Annotated[
 class Assistant:
     """AI agent and chat manager.
 
-    Manages agent templates, model configuration, command execution, and
+    Manages agent blueprints, model configuration, command execution, and
     the interactive chat loop. Supports switching between registered agents
     and processing user prompts (both chat and slash-commands).
 
@@ -47,9 +47,9 @@ class Assistant:
         provider is parsed from *model* if it contains a colon.
     model_parameters : dict[str, str | int | float | None] or None, optional
         Additional parameters for model initialization (e.g. temperature).
-    agents : list[Agent] or None, optional
-        A list of :class:`Agent` templates to register. Defaults to a
-        single default :class:`Agent` if ``None``.
+    agent_blueprints : list[AgentBlueprint] or None, optional
+        A list of :class:`AgentBlueprint` blueprints to register. Defaults to a
+        single default :class:`AgentBlueprint` if ``None``.
     default_agent : str or None, optional
         The name of the agent to use by default. If ``None``, the first
         agent in the list is used.
@@ -63,22 +63,22 @@ class Assistant:
         model: str,
         model_provider: str | None = None,
         model_parameters: dict[str, str | int | float | None] | None = None,
-        agents: list[Agent] | None = None,
+        agent_blueprints: list[AgentBlueprint] | None = None,
         default_agent: str | None = None,  # first agent by default
         callbacks: BaseCallbackHandler
         | list[BaseCallbackHandler]
         | None = None,
     ):
-        agents = agents or [Agent()]
-        self.agent_templates = {}
-        for agent in agents:
-            if agent.name in self.agent_templates:
+        agent_blueprints = agent_blueprints or [AgentBlueprint()]
+        self.agent_blueprints = {}
+        for blueprint in agent_blueprints:
+            if blueprint.name in self.agent_blueprints:
                 raise ValueError(
-                    f"Multiple agents added with the name '{agent.name}'."
+                    f"Multiple agent blueprints added with the name '{blueprint.name}'."
                 )
-            self.agent_templates[agent.name] = agent
+            self.agent_blueprints[blueprint.name] = blueprint
         self._agents = {}
-        self.current_agent_name = default_agent or agents[0].name
+        self.current_agent_name = default_agent or agent_blueprints[0].name
         self._current_agent = None
         self._prompt_config = None
         if callbacks:
@@ -133,7 +133,7 @@ class Assistant:
         """Retrieve or lazily instantiate the current agent runtime.
 
         If the current agent has not yet been instantiated, it is created
-        from its template using the assistant's model configuration.
+        from its blueprint using the assistant's model configuration.
 
         Returns
         -------
@@ -144,14 +144,14 @@ class Assistant:
         ------
         KeyError
             If the current agent name does not correspond to a registered
-            agent template.
+            agent blueprint.
         """
         name = self.current_agent_name
         if name not in self._agents:
-            agent_template = self.agent_templates.get(name, None)
-            if agent_template is None:
+            agent_blueprint = self.agent_blueprints.get(name, None)
+            if agent_blueprint is None:
                 raise KeyError(f"Agent {self.current_agent_name} not found")
-            agent = agent_template.instantiate(
+            agent = agent_blueprint.instantiate(
                 model=self._model,
                 model_provider=self._model_provider,
                 model_parameters=self._model_parameters,
