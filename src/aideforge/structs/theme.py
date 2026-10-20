@@ -1,12 +1,13 @@
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
+from .abc import BaseStruct
+
 __all__ = [
-    "ColorTheme",
+    "ThemeColor",
     "Theme",
-    "DefaultColorTheme",
-    "DefaultTheme",
+    "theme_collection",
     "to_term_color",
     "to_term_colors",
     "to_web_color",
@@ -19,7 +20,7 @@ WebColorValue = str | None
 WebColorType = WebColorValue | tuple[WebColorValue, WebColorValue]
 
 
-class ColorTheme(BaseModel):
+class ThemeColor(BaseModel):
     """Color configuration for different parts of the terminal interface.
 
     Each attribute accepts a number (0..255 for 16 or 256-color palette),
@@ -48,6 +49,7 @@ class ColorTheme(BaseModel):
     error : ColorType, optional
         Color for application level error messages.
     """
+
     # Input
     prompt_string: ColorType = None
     input: ColorType = None
@@ -63,52 +65,53 @@ class ColorTheme(BaseModel):
     error: ColorType = None
 
 
-class Theme(BaseModel):
-    """Top-level theme configuration for the CLI.
+class Theme(BaseStruct):
+    """Theme configuration for the CLI and other implementations.
+
+    Inherited fixed attributes and metadata:
+
+    - **kind**: ``"theme"`` (kinds: ``"themes"``)
+    - **version**: ``1``
+    - **scope**: ``"global"``
+    - **storage_name**: ``struct.name``
 
     Attributes
     ----------
-    prompt_string : str or None, optional
-        A template for the prompt string. May contain placeholders such as
-        ``{agent}`` and ``{model}``.
-    colors : ColorTheme, optional
-        The color theme to apply. Defaults to a :class:`ColorTheme` instance
+    name : str
+        Name of the theme to identify with
+    colors : ThemeColor
+        The color theme to apply. Defaults to a :class:`ThemeColor` instance
         with all colors set to ``None``.
     """
 
-    prompt_string: str | None = None
-    colors: ColorTheme = Field(default_factory=ColorTheme)
+    kind: Literal["theme"] = "theme"
+    version: Literal[1] = 1
+    name: str = Field(..., description="Name of the theme to identify with")
+    colors: ThemeColor = Field(default_factory=ThemeColor)
+    # TODO: fonts, borders, styles... for web maybe Annotated of WebTheme/CliTheme
+
+    # Metadata
+    scope: ClassVar[Literal["global"]] = "global"
+    storage_name: ClassVar[str] = "{struct.name}"
+    kinds: ClassVar[Literal["themes"]] = "themes"
 
 
-class MonochromeTheme(ColorTheme):
-    """A monochrome (color-less) color theme.
-
-    Attributes
-    ----------
-    prompt_string : str or None, optional
-        A template for the prompt string, showing the agent name.
-    """
-
-    prompt_string: str | None = "[{agent}]> "
-
-
-class DefaultColorTheme(ColorTheme):
-    """The default 16-color terminal color theme.
-    """
-
-    thinking: ColorType = 8
-    thinking_em: ColorType = 7
-    response: ColorType = 11
-    output_error: ColorType = 15
-    error: ColorType = 9
-
-
-class DefaultTheme(Theme):
-    """The default complete theme (prompt template + terminal colors).
-    """
-
-    prompt_string: str | None = "[{agent}]> "
-    colors: ColorTheme = Field(default_factory=DefaultColorTheme)
+theme_collection: dict[str, Theme] = {
+    "default": Theme(
+        name="default",
+        colors={
+            "thinking": 8,
+            "thinking_em": 7,
+            "response": 11,
+            "output_error": 15,
+            "error": 9,
+        },
+    ),
+    "monochrome": Theme(
+        name="monochrome",
+        colors={},
+    ),
+}
 
 
 def to_term_color(color: ColorType, *, background: bool = False) -> str | None:
@@ -164,20 +167,20 @@ def to_term_color(color: ColorType, *, background: bool = False) -> str | None:
         raise ValueError(f"Invalid color value '{color}'")
 
 
-def to_term_colors(colors: ColorTheme) -> ColorTheme:
-    """Convert all colors in a :class:`ColorTheme` to terminal escape sequences.
+def to_term_colors(colors: ThemeColor) -> ThemeColor:
+    """Convert all colors in a :class:`ThemeColor` to terminal escape sequences.
 
     Parameters
     ----------
-    colors : ColorTheme
+    colors : ThemeColor
         The color theme whose values should be converted. Each color value
         is replaced with its terminal escape sequence (or an empty string
         if the value was ``None``).
 
     Returns
     -------
-    ColorTheme
-        A new :class:`ColorTheme` instance (a copy of *colors*) with all
+    ThemeColor
+        A new :class:`ThemeColor` instance (a copy of *colors*) with all
         values replaced by terminal escape sequences.
     """
     colors = colors.model_copy()
@@ -249,20 +252,20 @@ def to_web_color(color: ColorType) -> WebColorType:
     raise ValueError(f"Invalid color value '{color}'")
 
 
-def to_web_colors(colors: ColorTheme) -> ColorTheme:
-    """Convert all colors in a :class:`ColorTheme` to web-safe hex strings.
+def to_web_colors(colors: ThemeColor) -> ThemeColor:
+    """Convert all colors in a :class:`ThemeColor` to web-safe hex strings.
 
     Parameters
     ----------
-    colors : ColorTheme
+    colors : ThemeColor
         The color theme whose values should be converted. Each color value
         is replaced with its web-safe hex equivalent (or an empty string
         if the value was ``None``).
 
     Returns
     -------
-    ColorTheme
-        A new :class:`ColorTheme` instance (a copy of *colors*) with all
+    ThemeColor
+        A new :class:`ThemeColor` instance (a copy of *colors*) with all
         values replaced by web-safe hex color strings.
     """
     colors = colors.model_copy()

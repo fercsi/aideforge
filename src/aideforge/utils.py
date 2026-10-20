@@ -1,4 +1,16 @@
-from typing import Any, TypeVar, overload
+from datetime import datetime, timezone
+from typing import Any, NewType, TypeVar, overload
+from uuid import UUID
+
+from uuid_utils.compat import uuid7  # Python 3.14+ natively supports uuid7
+
+__all__ = [
+    "IdType",
+    "create_id",
+    "deep_merge",
+    "id_to_timestamp",
+    "remove_nones",
+]
 
 
 def deep_merge(
@@ -80,3 +92,51 @@ def remove_nones(data: Any) -> Any:
     elif isinstance(data, list):
         return [remove_nones(v) for v in data if v is not None]
     return data
+
+
+IdType = NewType("IdType", UUID)
+
+
+def create_id(data_type: str | None = None) -> IdType:
+    """Creates a framework level ID
+
+    Parameters
+    ----------
+    data_type : str | None, optional
+        Short information about what the ID will be used for (e.g.
+        ``"event"``, ``"agent"``...)
+
+    Returns
+    -------
+    IdType
+        Unique ID
+    """
+    # Currently a simple UUID, later maybe prefixed
+    _ = data_type
+    return NewType(uuid7())
+
+
+def id_to_timestamp(id: IdType) -> datetime:
+    """Return timestamp encoded in AideForge ID format
+
+    Extracts the 48-bit millisec Unix timestamp from the UUIDv7 and returns
+    it as a UTC datetime object.
+
+    Parameters
+    ----------
+    id : IdType
+        ID containing timestamp information
+
+    Returns
+    -------
+    datetime
+        Timestamp in datetime format
+    """
+    # UUIDv7:
+    # tttttttt-tttt-7xxx-xxxx-xxxxxxxxxxxx
+    #   32 + 16 = 48 bit msec timestamp
+    #   80 bit rest (ver, submsec, random...)
+    # Get the most signigicant 48 bits:
+    timestamp_ms = id.int >> 80
+
+    return datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
