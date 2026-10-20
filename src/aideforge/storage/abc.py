@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import TypeVar
 
-from aideforge.structs.abc import BaseStruct
+from aideforge.structs.abc import BaseStruct, BaseIncrementalStruct, BaseEvent
 
 __all__ = ["BaseStorage", "StructT"]
 
@@ -55,6 +55,29 @@ class BaseStorage(ABC):
         ----------
         struct : BaseStruct
             The BaseStruct instance to store.
+        struct_name : str or None
+            Name under which the struct is stored.  When ``None``, a
+            default name is derived from ``struct.storage_name``.
+        """
+        pass
+
+    @abstractmethod
+    def store_struct_increment(
+        self,
+        struct: BaseIncrementalStruct,
+        increment: BaseEvent,
+        *,
+        struct_name: str | None = None,
+    ) -> None:
+        """Stores an increment to an incrementally stored struct
+
+        Parameters
+        ----------
+        struct : BaseStruct
+            The BaseStruct instance to store.
+        increment : BaseStruct
+            The BaseStruct increment instance to store within ``struct`'s
+            scope.
         struct_name : str or None
             Name under which the struct is stored.  When ``None``, a
             default name is derived from ``struct.storage_name``.
