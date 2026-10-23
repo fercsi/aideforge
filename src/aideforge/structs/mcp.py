@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -6,16 +6,16 @@ __all__ = ["McpServerConfig"]
 
 
 class McpHttpServerConfig(BaseModel):
-    kind: literal["mcp_server"] = "mcp_server"
-    version: literal[1] = 1
+    kind: Literal["mcp_server"] = "mcp_server"
+    version: Literal[1] = 1
     mcp_type: Literal["http"] = "http"
     name: str = Field(..., description="Name of the MCP")
     url: str = Field(..., description="URL of the HTTP based MCP")
 
 
 class McpStdioServerConfig(BaseModel):
-    kind: literal["mcp_server"] = "mcp_server"
-    version: literal[1] = 1
+    kind: Literal["mcp_server"] = "mcp_server"
+    version: Literal[1] = 1
     mcp_type: Literal["stdio"] = "stdio"
     name: str = Field(..., description="Name of the MCP")
     command: str = Field(

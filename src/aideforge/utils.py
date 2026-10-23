@@ -113,7 +113,7 @@ def create_id(data_type: str | None = None) -> IdType:
     """
     # Currently a simple UUID, later maybe prefixed
     _ = data_type
-    return NewType(uuid7())
+    return IdType(uuid7())
 
 
 def id_to_timestamp(id: IdType) -> datetime:

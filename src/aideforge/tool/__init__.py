@@ -4,15 +4,23 @@ import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from langchain.tools import BaseTool
+from langchain_core.tools import StructuredTool
 
-__all__ = ["AsyncTool", "ConfigurableTool"]
+__all__ = [
+    "AideForgeStructuredTool",
+    "AsyncTool",
+    "BaseAideForgeTool",
+    "PreconfiguredTool",
+    "ToolBlueprintType",
+    "ToolType",
+]
 
 
 @dataclass
-class ConfigurableTool:
+class PreconfiguredTool:
     """A wrapper around a tool with associated configuration.
 
     Allows tools to be defined declaratively with a separate configuration
@@ -27,11 +35,33 @@ class ConfigurableTool:
         or ``None`` if no configuration is needed.
     """
 
-    tool: type | Callable
+    tool: type[BaseTool]
     config: dict[str, Any] | None = None
 
 
-class AsyncTool(BaseTool):
+ToolType = BaseTool | Callable[..., Any]
+ToolBlueprintType = type[BaseTool] | PreconfiguredTool | Callable[..., Any]
+
+
+class _DescriptionMixin:
+    def update_description(self) -> None:
+        self.description = self.description.format(**self.model_dump())
+
+
+# Note: duplicate (do not reuse) constructors. This is safer.
+class BaseAideForgeTool(_DescriptionMixin, BaseTool):
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.update_description()
+
+
+class AideForgeStructuredTool(_DescriptionMixin, StructuredTool):
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.update_description()
+
+
+class AsyncTool(BaseAideForgeTool):
     """Base class for creating asynchronous LangChain tools.
 
     Subclasses should implement the :meth:`_arun` method. The :meth:`_run`

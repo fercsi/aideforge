@@ -55,6 +55,46 @@ class FileSystemStorage(BaseStorage):
         self.struct_paths = [] if struct_paths is None else struct_paths.copy()
         self.struct_format = struct_format
 
+    def retrieve_resource(
+        self,
+        path: str,
+        *,
+        ignore_failures: bool = False,
+    ) -> str | None:
+        """Retrieve a struct from the storage backend.
+
+        Parameters
+        ----------
+        path : str
+            Path of the resource to retrieve.
+        ignore_failures : bool
+            When ``True``, return ``None`` instead of raising if the
+            struct cannot be found.
+
+        Returns
+        -------
+        Any or None
+            The retrieved and validated struct, or ``None`` if not found
+            and ``ignore_failures`` is ``True``.
+        """
+        if path[0].isalpha():
+            path = "%/" + path
+        alternatives = self._search_struct_path_alternatives(self, path)
+        if not alternatives:
+            if ignore_failures:
+                return None
+            else:
+                raise FileNotFoundError(f"Resource '{path}' not found.")
+        try:
+            with open(file, "r", encoding="utf-8") as f:
+                content = f.read()
+            return content
+        except OSError:
+            if ignore_failures:
+                return None
+            else:
+                raise
+
     def retrieve_struct(
         self,
         struct_type: type[StructT],

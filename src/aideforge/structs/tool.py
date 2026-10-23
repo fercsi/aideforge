@@ -1,7 +1,11 @@
-from Pydantic import BaseModel
+from typing import Any, ClassVar, Literal
+
+from pydantic import BaseModel, Field
 
 from .abc import BaseStruct
 from .common import ToolPolicy
+
+__all__ = ["ToolModeConfig", "ToolConfig"]
 
 
 class ToolModeConfig(BaseModel):
@@ -37,12 +41,12 @@ class ToolModeConfig(BaseModel):
     ... )
     """
 
-    name: str | None = Field(
+    type: str | None = Field(
         default=None,
-        desvription="Name of the tool",
+        desvription="Type of the tool or tool mode",
     )
     policy: ToolPolicy = Field(
-        default=ToolPolicy.ALLOW,
+        default=ToolPolicy.INHERIT,
         description="Access policy of the tool",
     )
     config: Any = Field(

@@ -9,6 +9,7 @@ class Switch(StrEnum):
 
 
 class ToolPolicy(StrEnum):
+    INHERIT = "inherit"
     ALLOW = "allow"
     ASK = "ask"
     DENY = "deny"

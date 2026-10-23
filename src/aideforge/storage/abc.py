@@ -17,6 +17,31 @@ class BaseStorage(ABC):
     """
 
     @abstractmethod
+    def retrieve_resource(
+        self,
+        path: str,
+        *,
+        ignore_failures: bool = False,
+    ) -> str | None:
+        """Retrieve a struct from the storage backend.
+
+        Parameters
+        ----------
+        path : str
+            Path of the resource to retrieve.
+        ignore_failures : bool
+            When ``True``, return ``None`` instead of raising if the
+            struct cannot be found.
+
+        Returns
+        -------
+        Any or None
+            The retrieved and validated struct, or ``None`` if not found
+            and ``ignore_failures`` is ``True``.
+        """
+        pass
+
+    @abstractmethod
     def retrieve_struct(
         self,
         struct_type: type[StructT],
