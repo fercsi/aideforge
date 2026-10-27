@@ -1,4 +1,3 @@
-# TODO decanonize/canonize model name?
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +8,7 @@ from contextlib import redirect_stderr
 from copy import deepcopy
 from enum import StrEnum
 from threading import Lock
-from typing import Any, AsyncGenerator, Callable, Literal
+from typing import Any, AsyncGenerator, Awaitable, Callable, Literal
 
 # SUPRESS HUGGINGFACE WARNINGS
 # ============================
@@ -32,9 +31,13 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import (
     HumanInTheLoopMiddleware,
     InterruptOnConfig,
+    ModelCallResult,
+    ModelRequest,
+    ModelResponse,
     before_model,
 )
-#>from langchain.agents.middleware.types import awrap_model_call
+
+# from langchain.agents.middleware.types import awrap_model_call
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.messages import (
     HumanMessage,
@@ -45,7 +48,7 @@ from langchain.messages import (
 from langchain.tools import BaseTool
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tools import StructuredTool
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
 from langgraph.types import Command
@@ -69,18 +72,50 @@ __all__ = [
 ]
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are my AI assistant that has no access to any tools. "
-    "Please, try to answer all my questions as well as possible without using any."
+    "You are my AI assistant that has no access to any tools. Please, try "
+    "to answer all my questions as well as possible without using any."
 )
 
 
 class ActionRequest(BaseModel):
+    """Represents a request to invoke a tool, pending human approval.
+
+    Attributes
+    ----------
+    name : str
+        The name of the tool to invoke.
+    args : dict[str, Any]
+        The arguments to pass to the tool.
+    description : str
+        A human-readable description of the action, used for approval prompts.
+    """
+
     name: str
     args: dict[str, Any]
     description: str
 
 
 class ApprovalDecision(StrEnum):
+    """Enumeration of possible approval decisions for tool calls.
+
+    Attributes
+    ----------
+    APPROVE : str
+        Approve the current tool call and continue.
+    REJECT : str
+        Reject the current tool call and continue.
+    ALWAYS : str
+        Always approve this tool call until the end of session, including the
+        current one.
+    ALWAYS_ALL_TOOLS : str
+        Always approve all tool calls until the end of session, including the
+        current one.
+    APPROVE_FOR_RUN : str
+        Approve the current tool call for this run.
+    APPROVE_ALL_TOOLS_FOR_RUN : str
+        Approve the all tool calls for this run.
+    """
+
     APPROVE = "approve"
     REJECT = "reject"
     ALWAYS = "always"
@@ -105,6 +140,32 @@ class LlmResponse(BaseModel):
 
 
 class AgentSetup(BaseModel):
+    """Container for resolved agent configuration used to instantiate a runtime.
+
+    Holds the resolved values (model config, tools, system message, etc.)
+    that are needed to create an :class:`AgentRuntime`.
+
+    Attributes
+    ----------
+    agent_id : IdType
+        The agent's unique ID.
+    name : str
+        The agent's type name.
+    llm_config : LlmConfig
+        Configuration parameters for the initial LLM.
+    tools : list[BaseTool] or None, optional
+        List of tools in the format supported by LangChain.
+    system_message : SystemMessage
+        System message containing the system prompt, including steering
+        documents and other resources.
+    interrupt_on : dict[str, InterruptOnConfig] or None, optional
+        Configuration on which tools should be interrupted.
+    callbacks : BaseCallbackHandler or None, optional
+        Callback handler to run on various points of the operation.
+    warning_callback : Callable[str, None] or None, optional
+        Callback routine to run if a warning should be sent to user.
+    """
+
     # This is needed to store callback handler, and other callbacks
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -115,11 +176,16 @@ class AgentSetup(BaseModel):
     )
     tools: list[BaseTool] | None = Field(
         default=None,
-        description="List of tools in format supported by LangChain `agent_create`",
+        description=(
+            "List of tools in format supported by LangChain `agent_create`"
+        ),
     )
     system_message: SystemMessage = Field(
         ...,
-        description="System message containing system prompt, including steering documents and other resources",
+        description=(
+            "System message containing system prompt, including "
+            "steering documents and other resources"
+        ),
     )
     # TODO: Pydantic tries to resolve TypeDict (InterruptOnConfig)
     # interrupt_on: dict[str, InterruptOnConfig | bool] | None = Field(
@@ -129,11 +195,15 @@ class AgentSetup(BaseModel):
     )
     callbacks: BaseCallbackHandler | None = Field(
         default=None,
-        description="Callback handler to run on various points of the operation.",
+        description=(
+            "Callback handler to run on various points of the operation.",
+        ),
     )
     warning_callback: Callable[str, None] | None = Field(
         default=None,
-        description="Callback routine to run if a warning should be sent to user",
+        description=(
+            "Callback routine to run if a warning should be sent to user",
+        ),
     )
 
 
@@ -157,15 +227,26 @@ class AgentRuntime:
 
     Parameters
     ----------
-    setup : dict[str, Any]
-        A dictionary containing the resolved agent configuration, including
-        keys such as ``"model"``, ``"tools"``, ``"system_message"``,
-        ``"name"``, and ``"context_config"``.
-    info : dict[str, Any]
-        A dictionary of informational metadata about the agent, such as
-        ``"model"``, ``"model_provider"``, and ``"model_parameters"``.
-    blueprint : AgentBlueprint
-        The :class:`AgentBlueprint` template from which this runtime was instantiated.
+    setup : AgentSetup
+        The resolved agent setup containing model config, tools, system
+        message, and callback configuration.
+    config : AgentConfig
+        The agent configuration template with tool policies, tools,
+        system prompt, context, and LLM defaults.
+
+    Attributes
+    ----------
+    name : str
+        Name of the agent's type
+    agent_id : IdType
+        Unique ID of agent
+    context_info : ContextConfig
+        Information on context. Rather limited at this point (contains
+        max_input_tokens and max_output_tokens)
+    setup : AgentSetup
+        See above
+    config : AgentConfig
+        See above
     """
 
     def __init__(
@@ -174,6 +255,17 @@ class AgentRuntime:
         setup: AgentSetup,
         config: AgentConfig,
     ) -> None:
+        """Initialize the agent runtime with resolved configuration.
+
+        Parameters
+        ----------
+        setup : AgentSetup
+            The resolved agent setup containing model config, tools,
+            system message, and callback configuration.
+        config : AgentConfig
+            The agent configuration containing tool policies, tools,
+            system prompt, context, and LLM defaults.
+        """
         self.setup = setup
         self.config = config
 
@@ -195,10 +287,11 @@ class AgentRuntime:
 
         self._warning_callback = setup.warning_callback
 
-        checkpointer = MemorySaver()  # TODO: do we want persistent store
+        checkpointer = InMemorySaver()  # TODO: do we want persistent store
         middleware = [
             before_model(self._limit_history),
-#>            awrap_model_call(self._route_model),
+            # awrap_model_call(self._route_model),
+            # awrap_model_call does not work in LangGraph, yet
         ]
         if setup.interrupt_on:  # Tool execution control
             middleware.append(
@@ -233,25 +326,27 @@ class AgentRuntime:
         ----------
         prompt : str
             The user's input prompt text.
-        config : dict[str, Any] or None, optional
-            Additional configuration passed to the LangChain agent's
-            ``ainvoke`` call, by default ``None``. Currently, callbacks are
-            the only configuration setting used internally (by
-            :class:`Assistant`).
+        thread_idx : int, optional
+            The index of the conversation thread to use, by default 0.
+            If the thread does not exist yet, it is created automatically.
 
-        Returns
-        -------
-        LlmResponse or LlmError
-            The LLM response content on success, or an :class:`LlmError`
-            if an exception occurs during processing.
+        Yields
+        ------
+        ActionRequest | LlmResponse | LlmError
+            ``ActionRequest`` instances are yielded when the agent needs
+            human approval to invoke a tool; the caller must send an
+            :class:`ApprovalDecision` via ``asend``. ``LlmResponse`` is
+            yielded with the final LLM response content on success.
+            ``LlmError`` is yielded if an exception occurs during
+            processing.
 
         Examples
         --------
         >>> processor = agent.prompt_processor("List me the python files")
-        ... response = await anext(processor)
-        ... while isinstance(response, ActionRequest)::
-        ...   action = async_input(action_req.description + "\napprove or reject? ")
-        ...   response = await processor.asend(action)
+        >>> response = await anext(processor)
+        >>> while isinstance(response, ActionRequest):
+        ...   action = async_input(response.description + "\napprove/reject? ")
+        ...   response = await processor.asend(ApprovalDecision(action))
         >>> # process response message or error
         """
         async with self._threads_lock:  # to be sure
@@ -322,7 +417,8 @@ class AgentRuntime:
                     Command(resume={"decisions": decisions}), config=config
                 )
                 state = await self._agent.aget_state(config)
-            # self._context_size = result["messages"][-1].response_metadata["token_usage"]["total_tokens"]
+            # TODO: self._context_size +=
+            # result["messages"][-1].response_metadata["token_usage"]["total_tokens"]
             yield LlmResponse(content=response["messages"][-1].content)
         except Exception as exc:
             # TODO: Somehow separate LLM and other errors:
@@ -335,11 +431,39 @@ class AgentRuntime:
             yield LlmError(error_message=err_msg)
 
     def change_llm(self, llm_config: LlmConfig) -> None:
+        """Switch the underlying LLM and reinitialize the context config.
+
+        Note: Changing LLM during the session is not supported, yet.
+
+        Parameters
+        ----------
+        llm_config : LlmConfig
+            The new LLM configuration to use for subsequent processing.
+        """
+        if hasattr(self, "_llm_config"):
+            raise NotImplementedError(
+                "Changing LLM during the session is not supported, yet."
+            )
         self._llm_config = llm_config
         self._llmodel = _get_model_instance(llm_config)  # LLM store is global
         self._init_context_config()
 
     def set_tool_policy(self, tool_name: str, policy: ToolPolicy) -> None:
+        """Set the tool access policy for a specific tool.
+
+        Parameters
+        ----------
+        tool_name : str
+            The name of the tool whose policy is being set.
+        policy : ToolPolicy
+            The access policy to apply. If ``ToolPolicy.INHERIT``, the
+            policy is resolved from the agent's default tool policy.
+
+        Raises
+        ------
+        ValueError
+            If the agent does not have a tool with the given name.
+        """
         if tool_name not in self._tool_policy:
             raise ValueError(
                 f"Agent does not have a tool with name '{tool_name}'"
@@ -355,24 +479,13 @@ class AgentRuntime:
 
         Copies the agent's :class:`ContextConfig`, fills in missing
         ``max_input_tokens`` and ``max_output_tokens`` from the model
-        profile, and converts percentage-based ``max_prompt_tokens`` to
-        an absolute value.
-
-        Parameters
-        ----------
-        setup : dict[str, Any]
-            The setup dictionary containing the resolved ``"model"`` key.
-
-        Returns
-        -------
-        ContextConfig
-            A validated copy of the context configuration.
+        profile, and stores the result as ``self.context_info``.
 
         Raises
         ------
         ValueError
             If ``max_input_tokens`` exceeds the model's maximum context
-            size, or if ``max_prompt_tokens`` exceeds ``max_input_tokens``.
+            size.
         """
         cfg = self.config.context.model_copy()
         model = self._llmodel
@@ -386,9 +499,30 @@ class AgentRuntime:
             )
         # don't check if user set output token count, silently change it
         cfg.max_output_tokens = model.profile["max_output_tokens"]
-        self.context_config = cfg
+        self.context_info = cfg
 
-    def _limit_history(self, state, runtime: Runtime):
+    def _limit_history(
+        self, state: dict[str, Any], runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Trim the message history to fit within the model's context window.
+
+        Registered as a ``before_model`` middleware callback. Trims the
+        message list using LangChain's :func:`trim_messages` helper, keeping
+        the most recent messages that fit within the configured token limit.
+
+        Parameters
+        ----------
+        state : dict[str, Any]
+            The current agent state, containing a ``"messages"`` key.
+        runtime : Runtime
+            The LangGraph runtime (currently unused).
+
+        Returns
+        -------
+        dict[str, Any] or None
+            A state update dictionary with trimmed messages, or ``None``
+            if no trimming was necessary.
+        """
         # @before_model method
         _ = runtime
         messages = state["messages"]
@@ -398,7 +532,7 @@ class AgentRuntime:
             warnings.simplefilter("always")
             trimmed = trim_messages(
                 messages,
-                max_tokens=self.context_config.max_input_tokens,
+                max_tokens=self.context_info.max_input_tokens,
                 strategy="last",
                 token_counter=self._llmodel,  # or "approximate"
                 include_system=True,  # keep system prompt (but not in that :(
@@ -415,12 +549,40 @@ class AgentRuntime:
             ]
         }
 
-    async def _route_model(self, request, handler):
-        # @wrap_model_call method
+    async def _route_model(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
+    ) -> ModelCallResult[Any]:
+        """Route a model call, overriding the model with the current one.
+
+        Registered as a ``awrap_model_call`` middleware callback.
+
+        Parameters
+        ----------
+        request : ModelRequest[Any]
+            The incoming model request.
+        handler : Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]]
+            The next handler in the middleware chain.
+
+        Returns
+        -------
+        ModelCallResult[Any]
+            The result from the overridden model call.
+        """
+        # @awrap_model_call method
+        # awrap_model_call does not work in LangGraph
         model = self._llmodel
         return await handler(request.override(model=model))
 
     def _warning(self, message: str) -> None:
+        """Send a warning message to the warning callback if set.
+
+        Parameters
+        ----------
+        message : str
+            The warning message to send.
+        """
         if self._warning_callback:
             self._warning_callback(message)
 
@@ -432,33 +594,26 @@ class AgentBlueprint:
     configuration, and resources. Instances are templates used to create
     :class:`AgentRuntime` objects via the :meth:`instantiate` method.
 
+
+    Parameters
+    ----------
+    config : AgentConfig | dict[str, Any] | None, optional
+        The agent configuration. May be an :class:`AgentConfig`
+        instance, a dictionary to validate, or ``None`` to use defaults.
+    tool_pool : list[ToolType] or None, optional
+        A list of tools available to the agent. Each entry may be a
+        :class:`BaseTool` subclass, a :class:`PreconfiguredTool`, or a
+        callable. If ``None``, no tools are available.
+    storage : BaseStorage or None, optional
+        Storage backend for retrieving content resources. If ``None``,
+        resources can be implemented only with their inline content.
+
     Attributes
     ----------
     name : str
         The agent's name, used for identification and lookup.
-    description : str
-        A short description of the agent's purpose.
-    system_prompt : SystemMessage or str
-        The system prompt defining the agent's behavior.
-    tools : list[PreconfiguredTool | BaseTool | Callable]
-        A list of tools available to the agent.
-    tool_setup : dict[str, dict[str, Any]]
-        Configuration dictionaries for tools.
-    resources : list[Content]
-        Content resources (e.g. instructions) to embed in the system prompt.
-    welcome_message : str
-        A message displayed when the agent is first used.
-    model : str or None
-        The default model name for this agent. The name may also include the
-        provider; in this case, they must be separated by a colon:
-        "openai:gpt-4o". In this case, "model_provider" should be "None".
-    model_provider : str or None
-        The default model provider for this agent.
-    model_parameters : dict[str, Any] or None
-        Default parameters to pass when initializing the model. E.g.
-        temperature
-    context_config : ContextConfig
-        Context window configuration for this agent.
+    config : AgentConfig
+        See above
     """
 
     def __init__(
@@ -479,10 +634,26 @@ class AgentBlueprint:
 
         Parameters
         ----------
-        setup : dict[str, Any] or None, optional
-            Reserved for future use; currently unused. If provided, it
-            will be used to create agen blueprintsvfrom agent settings
-            instead of derivation in the future.
+        config : AgentConfig | dict[str, Any] | None, optional
+            The agent configuration. May be an :class:`AgentConfig`
+            instance, a dictionary to validate, or ``None`` to use defaults.
+        tool_pool : list[ToolType] or None, optional
+            A list of tools available to the agent. Each entry may be a
+            :class:`BaseTool` subclass, a :class:`PreconfiguredTool`, or a
+            callable. If ``None``, no tools are available.
+        storage : BaseStorage or None, optional
+            Storage backend for retrieving content resources. If ``None``,
+            resources can be implemented only with their inline content.
+        callbacks : BaseCallbackHandler | list[BaseCallbackHandler] or None, optional
+            One or more callback handlers to run during agent operation.
+        warning_callback : Callable[str, None] or None, optional
+            A callable invoked with warning messages during operation.
+
+        Raises
+        ------
+        ValueError
+            If *config* is provided but is neither an :class:`AgentConfig`
+            nor a ``dict``.
         """
         if config is None:
             self.config = AgentConfig()
@@ -527,20 +698,14 @@ class AgentBlueprint:
 
         Parameters
         ----------
-        model : str or None, optional
-            If no model is specified in the agent blueprint, it needs to be
-            specified here. By default, the agent’s own model is used, but
-            if ``force_model`` is set to ``True``, this parameter overrides
-            the agent’s own one.
-        model_provider : str or None, optional
-            The model provider (e.g. ``"openai"``). This is used when the
-            ``model`` parameter is specified above.
-        model_parameters : dict[str, Any] or None, optional
-            Additional parameters passed to the model initializer. This is
-            used when the ``model`` parameter is specified above.
-        force_model : bool, optional
-            If ``True``, the provided *model* arguments override the
-            agent's defaults, by default ``False``.
+        llm : LlmConfig | None, optional
+            If no model is configured in the agent blueprint, it must be
+            specified here. By default, the agent's own model is used, but
+            if ``force_llm`` is ``True``, this parameter overrides the
+            agent's defaults.
+        force_llm : bool, optional
+            If ``True``, the provided *llm* overrides the agent's default
+            model, by default ``False``.
 
         Returns
         -------
@@ -551,7 +716,7 @@ class AgentBlueprint:
         Raises
         ------
         TypeError
-            If *model* is ``None`` and ``force_model`` is ``True`` (or the
+            If *llm* is ``None`` and ``force_llm`` is ``True`` (or the
             agent has no default model).
         ValueError
             If a tool is invalid, or if context configuration exceeds model
@@ -572,6 +737,30 @@ class AgentBlueprint:
     def _prepare_llm_config(
         self, llm: LlmConfig | None, force_llm: bool
     ) -> LlmConfig:
+        """Resolve which LLM configuration to use for the agent.
+
+        By default agent rutime uses the agent blueprint's LLM configuration.
+        If it is not specified or ``force_llm`` is ``True``, ``llm`` input
+        will be used instead.
+
+        Parameters
+        ----------
+        llm : LlmConfig | None
+            Optionally provided LLM configuration to override the agent's
+            default.
+        force_llm : bool
+            If ``True``, use *llm* even if the agent has a default model.
+
+        Returns
+        -------
+        LlmConfig
+            The resolved LLM configuration.
+
+        Raises
+        ------
+        TypeError
+            If no LLM configuration is available.
+        """
         if self.config.llm is None or force_llm:
             if llm is None:
                 raise TypeError(
@@ -582,6 +771,19 @@ class AgentBlueprint:
         return llm
 
     def _prepare_tools(self) -> list[ToolType] | None:
+        """Instantiate and configure tools for the agent runtime.
+
+        Iterates over the configured tool definitions, looks up each tool
+        type in the tool pool, applies per-tool configuration, and resolves
+        custom names. Tools that are not found emit a warning and are
+        skipped.
+
+        Returns
+        -------
+        list[ToolType] or None
+            A list of resolved tool instances, or ``None`` if no tools
+            are configured.
+        """
         tools = []
         for name, cfg in self.config.tools.items():
             # name - user given id to tool
@@ -592,7 +794,8 @@ class AgentBlueprint:
             tool = self._tools.get(tool_type)
             if tool is None:
                 self._warning(
-                    f"Agent wants to use tool '{tool_type}' but tool does not exist."
+                    f"Agent wants to use tool '{tool_type}' but tool "
+                    "does not exist."
                 )
                 # TODO: collect issues without failing
                 continue
@@ -631,14 +834,8 @@ class AgentBlueprint:
         """Build the :class:`SystemMessage` from the prompt and resources.
 
         Concatenates the agent's system prompt with any configured
-        resources, then validates the token count against the configured
-        maximum.
-
-        Parameters
-        ----------
-        setup : dict[str, Any]
-            The setup dictionary containing ``"context_config"`` (with a
-            ``"max_prompt_tokens"`` key) and ``"model"`` keys.
+        resources. Resources may be provided as inline content, file
+        paths, or :class:`Content` objects.
 
         Returns
         -------
@@ -647,9 +844,11 @@ class AgentBlueprint:
 
         Raises
         ------
+        RuntimeError
+            If a resource references a path but no storage backend was
+            provided to the blueprint.
         ValueError
-            If the system prompt (with resources) exceeds the maximum
-            allowed prompt token count.
+            If a resource has neither inline content nor a path.
         """
         system_prompt = self.config.system_prompt
         resources = self.config.resources
@@ -666,6 +865,29 @@ class AgentBlueprint:
         return SystemMessage(content=system_prompt)
 
     def _get_text_from_content(self, content: Content) -> str:
+        """Retrieve text content from a :class:`Content` object.
+
+        Returns the inline content if present, otherwise retrieves it from
+        storage using the content's path.
+
+        Parameters
+        ----------
+        content : Content
+            A :class:`Content` object with either inline content or a
+            storage path.
+
+        Returns
+        -------
+        str
+            The retrieved text content.
+
+        Raises
+        ------
+        RuntimeError
+            If *content* has a path but no storage backend was provided.
+        ValueError
+            If *content* has neither inline content nor a path.
+        """
         if content.content is not None:
             return str(content.content)
         elif content.path is not None:
@@ -680,6 +902,24 @@ class AgentBlueprint:
     def _create_interrupt_on(
         self, tools: list[ToolType] | None
     ) -> dict[str, InterruptOnConfig | bool] | None:
+        """Create interrupt-on configuration for the agent's tools.
+
+        Each tool call is interrupted and approved (or rejected) per-call
+        by the runtime. This method generates the per-tool interrupt
+        configuration that enables that flow. Note that per-tool policy
+        settings are not considered here.
+
+        Parameters
+        ----------
+        tools : list[ToolType] or None
+            The resolved list of tool instances.
+
+        Returns
+        -------
+        dict[str, InterruptOnConfig | bool] or None
+            A mapping from tool name to interrupt configuration, or ``None``
+            if no tools are provided.
+        """
         # Currently every tool call is interrupted and approved automatically
         # by RuntimeAgent if possible. This way the interruptability can be
         # controlled during the operation. Policy settings are here not
@@ -690,19 +930,31 @@ class AgentBlueprint:
             # TODO: in case of some tools "respond" might be also a good option
             #       instead of contination with LLM
             allowed_decisions=["approve", "reject"],
-            description=lambda tool_call, state, runtime: f"Tool: {tool_call['name']}\nArgs: {tool_call['args']}",
+            description=lambda tool_call, state, runtime: (
+                f"Tool: {tool_call['name']}\nArgs: {tool_call['args']}"
+            ),
         )
         # cannot use self.config.tools, because some may fail while createing
         # runtime tools. So use runtime tool set instead
         return {t.name: deepcopy(config) for t in tools}
 
     def _warning(self, message: str) -> None:
+        """Send a warning message to the warning callback if set.
+
+        Parameters
+        ----------
+        message : str
+            The warning message to send.
+        """
         if self._warning_callback:
             self._warning_callback(message)
 
 
 def _get_model_instance(llm: LlmConfig) -> BaseChatModel:
     """Initialize or retrieve a cached chat model instance.
+
+    A model with a specific parameter set is created once and it will be
+    reused, if the same is requested.
 
     Parameters
     ----------
@@ -733,68 +985,85 @@ def _get_model_instance(llm: LlmConfig) -> BaseChatModel:
 _models_in_use = {}
 _models_lock = Lock()
 
-
-#>def _get_token_count(model: BaseChatModel, text: str) -> tuple[int, bool]:
-#>    """Count the number of tokens in *text* using the given model.
-#>
-#>    Note: some models do not support native token counting. In this case
-#>    the returned token count is an estimate and may be inaccurate.
-#>
-#>    Warnings from the underlying model are captured and suppressed.
-#>    HuggingFace warnings that cannot be reliably muted are redirected
-#>    to a buffer.
-#>
-#>    Parameters
-#>    ----------
-#>    model : BaseChatModel
-#>        The language model used to count tokens.
-#>    text : str
-#>        The text for which to count tokens.
-#>
-#>    Returns
-#>    -------
-#>    tuple[int, bool]
-#>        The number of tokens in *text* according to the model's tokenizer
-#>        and a flag which is True if the value is only estimated.
-#>    """
-#>    stderr_buffer = io.StringIO()
-#>    with warnings.catch_warnings(record=True) as captured_warnings:
-#>        warnings.simplefilter("always")
-#>
-#>        # Hack: HuggingFace warnings cannot be reliably muted
-#>        with redirect_stderr(stderr_buffer):
-#>            # TODO: Synchronous call. No asynchronous alternative :(
-#>            token_count = model.get_num_tokens(text)
-#>
-#>        # Warning if tokens cannot be counted exactly?!
-#>        is_estimated = any(
-#>            "fallback" in str(w.message) for w in captured_warnings
-#>        )
-#>        return token_count, is_estimated
-#>
-#>
-#>def _trim_text(
-#>    model: BaseChatModel, text: str, max_tokens: int
-#>) -> tuple[str, bool]:
-#>    curcnt, is_estimated = _get_token_count(model, text)
-#>    if curcnt <= max_tokens:
-#>        return text, is_estimated
-#>    estimated_length = len(text) * max_tokens // curcnt
-#>    return text[:estimated_length], True
-#>    # stderr_buffer = io.StringIO()
-#>    # with warnings.catch_warnings(record=True) as captured_warnings:
-#>    #     warnings.simplefilter("always")
-#>    #
-#>    #     # Hack: HuggingFace warnings cannot be reliably muted
-#>    #     with redirect_stderr(stderr_buffer):
-#>    #         tokens = model.get_token_ids(text)
-#>    #
-#>    #         if len(tokens) > max_tokens:
-#>    #             tokens = tokens[:max_tokens]
-#>    #             text = model.decode(tokens)
-#>    #
-#>    #     # Warning if tokens cannot be counted exactly?!
-#>    #     is_estimated = any(
-#>    #         "fallback" in str(w.message) for w in captured_warnings
-#>    #     )
-#>    #     return text, is_estimated
+# TEMPORARILY REMOVED
+# def _get_token_count(model: BaseChatModel, text: str) -> tuple[int, bool]:
+#     """Count the number of tokens in *text* using the given model.
+#
+#     Note: some models do not support native token counting. In this case
+#     the returned token count is an estimate and may be inaccurate.
+#
+#     Warnings from the underlying model are captured and suppressed.
+#     HuggingFace warnings that cannot be reliably muted are redirected
+#     to a buffer.
+#
+#     Parameters
+#     ----------
+#     model : BaseChatModel
+#         The language model used to count tokens.
+#     text : str
+#         The text for which to count tokens.
+#
+#     Returns
+#     -------
+#     tuple[int, bool]
+#         The number of tokens in *text* according to the model's tokenizer
+#         and a flag which is True if the value is only estimated.
+#     """
+#     stderr_buffer = io.StringIO()
+#     with warnings.catch_warnings(record=True) as captured_warnings:
+#         warnings.simplefilter("always")
+#
+#         # Hack: HuggingFace warnings cannot be reliably muted
+#         with redirect_stderr(stderr_buffer):
+#             # TODO: Synchronous call. No asynchronous alternative :(
+#             token_count = model.get_num_tokens(text)
+#
+#         # Warning if tokens cannot be counted exactly?!
+#         is_estimated = any(
+#             "fallback" in str(w.message) for w in captured_warnings
+#         )
+#         return token_count, is_estimated
+#
+#
+# def _trim_text(
+#     model: BaseChatModel, text: str, max_tokens: int
+# ) -> tuple[str, bool]:
+#     """Trim a text to a maximum number of tokens
+#
+#     Parameters
+#     ----------
+#     model : BaseChatModel
+#         The language model used to count tokens.
+#     text : str
+#         The text for which to count tokens.
+#     max_tokens : int
+#         The maximum number of tokens the output text should contain
+#
+#     Returns
+#     -------
+#     tuple[str, bool]
+#         The trimmed text according to the model's tokenizer and a flag
+#         which is True if the value is only estimated.
+#     """
+#     curcnt, is_estimated = _get_token_count(model, text)
+#     if curcnt <= max_tokens:
+#         return text, is_estimated
+#     estimated_length = len(text) * max_tokens // curcnt
+#     return text[:estimated_length], True
+#     # stderr_buffer = io.StringIO()
+#     # with warnings.catch_warnings(record=True) as captured_warnings:
+#     #     warnings.simplefilter("always")
+#     #
+#     #     # Hack: HuggingFace warnings cannot be reliably muted
+#     #     with redirect_stderr(stderr_buffer):
+#     #         tokens = model.get_token_ids(text)
+#     #
+#     #         if len(tokens) > max_tokens:
+#     #             tokens = tokens[:max_tokens]
+#     #             text = model.decode(tokens)
+#     #
+#     #     # Warning if tokens cannot be counted exactly?!
+#     #     is_estimated = any(
+#     #         "fallback" in str(w.message) for w in captured_warnings
+#     #     )
+#     #     return text, is_estimated
