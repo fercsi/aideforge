@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import TypeVar
 
-from aideforge.structs.abc import BaseStruct, BaseIncrementalStruct, BaseEvent
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
+from aideforge.structs import BaseStruct, BaseIncrementalStruct, BaseEvent
 
 __all__ = ["BaseStorage", "StructT"]
 
@@ -21,23 +23,49 @@ class BaseStorage(ABC):
         self,
         path: str,
         *,
-        ignore_failures: bool = False,
-    ) -> str | None:
-        """Retrieve a struct from the storage backend.
+        mode: str = "t",
+        ignore_failure: bool = False,
+    ) -> str | bytes | None:
+        """Retrieve a resource from the storage backend.
 
         Parameters
         ----------
         path : str
             Path of the resource to retrieve.
-        ignore_failures : bool
+        mode : str, optional
+            Mode how the resource should be returned, ``"t"`` for text (default)
+            and ``"b"`` for binary.
+        ignore_failure : bool, optional
             When ``True``, return ``None`` instead of raising if the
-            struct cannot be found.
+            resource cannot be found.
 
         Returns
         -------
-        Any or None
-            The retrieved and validated struct, or ``None`` if not found
-            and ``ignore_failures`` is ``True``.
+        str or bytes or None
+            The retrieved content, or ``None`` if not found
+            and ``ignore_failure`` is ``True``.
+        """
+        pass
+
+    @abstractmethod
+    def store_resource(
+        self,
+        path: str,
+        content: str|bytes,
+        *,
+        ignore_failure: bool = False,
+    ) -> None:
+        """Store a resource to the storage backend.
+
+        Parameters
+        ----------
+        path : str
+            Path of the resource to retrieve.
+        content : str | bytes
+            Content of the resource to be stored.
+        ignore_failure : bool
+            When ``True``, return instead of raising if the
+            resource cannot be stored.
         """
         pass
 
@@ -47,7 +75,7 @@ class BaseStorage(ABC):
         struct_type: type[StructT],
         struct_name: str | None = None,
         *,
-        ignore_failures: bool = False,
+        ignore_failure: bool = False,
     ) -> StructT | None:
         """Retrieve a struct from the storage backend.
 
@@ -58,7 +86,7 @@ class BaseStorage(ABC):
         struct_name : str or None
             Name of the struct to retrieve.  When ``None``, a default
             name is derived from ``struct_type.storage_name``.
-        ignore_failures : bool
+        ignore_failure : bool
             When ``True``, return ``None`` instead of raising if the
             struct cannot be found.
 
@@ -66,13 +94,15 @@ class BaseStorage(ABC):
         -------
         StructT or None
             The retrieved and validated struct, or ``None`` if not found
-            and ``ignore_failures`` is ``True``.
+            and ``ignore_failure`` is ``True``.
         """
         pass
 
     @abstractmethod
     def store_struct(
-        self, struct: BaseStruct, struct_name: str | None = None
+        self, struct: BaseStruct, struct_name: str | None = None,
+        *,
+        ignore_failure: bool = False,
     ) -> None:
         """Store a struct in the storage backend.
 
@@ -93,6 +123,7 @@ class BaseStorage(ABC):
         increment: BaseEvent,
         *,
         struct_name: str | None = None,
+        ignore_failure: bool = False,
     ) -> None:
         """Stores an increment to an incrementally stored struct
 
@@ -122,5 +153,25 @@ class BaseStorage(ABC):
         -------
         list[str]
             Sorted list of struct names found in the storage backend.
+        """
+        pass
+
+    @abstractmethod
+    def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
+        """Returns the requested checkpoint saver
+
+        Usually a single checkpoint saver for the whole application is
+        sufficient. If multiple savers are needed, use ``saver_id`` to 
+        identify them. E.g. ``str(session_id)``
+
+        Parameters
+        ----------
+        saver_id : str | None, optional
+            ID if multiple checkpoint savers are used
+
+        Returns
+        -------
+        BaseCheckpointSaver
+            Checkpoint saver instance
         """
         pass

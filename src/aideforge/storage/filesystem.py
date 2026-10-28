@@ -7,7 +7,10 @@ from itertools import product
 from pathlib import Path
 from typing import Any, cast
 
-from aideforge.structs.abc import (
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
+
+from aideforge.structs import (
     BaseStruct,
     BaseIncrementalStruct,
     BaseEvent,
@@ -30,6 +33,8 @@ class FileSystemStorage(BaseStorage):
     file found across the search paths is deep-merged, with the first file
     encountered having the highest precedence.
     """
+
+    checkpoint_saver: BaseCheckpointSaver | None = None
 
     def __init__(
         self,
@@ -54,53 +59,83 @@ class FileSystemStorage(BaseStorage):
         # assumes valid inputs)
         self.struct_paths = [] if struct_paths is None else struct_paths.copy()
         self.struct_format = struct_format
+        if FileSystemStorage.checkpoint_saver is None:
+            # TODO Change to persistent saver!
+            # TODO ThreadSafe! (Singleton?)
+            FileSystemStorage.checkpoint_saver = InMemorySaver()
 
     def retrieve_resource(
         self,
         path: str,
         *,
-        ignore_failures: bool = False,
-    ) -> str | None:
-        """Retrieve a struct from the storage backend.
+        mode: str = "t",
+        ignore_failure: bool = False,
+    ) -> str | bytes | None:
+        """Retrieve a resource from the storage backend.
 
         Parameters
         ----------
         path : str
             Path of the resource to retrieve.
-        ignore_failures : bool
+        mode : str, optional
+            Mode how the resource should be returned, ``"t"`` for text (default)
+            and ``"b"`` for binary.
+        ignore_failure : bool, optional
             When ``True``, return ``None`` instead of raising if the
-            struct cannot be found.
+            resource cannot be found.
 
         Returns
         -------
-        Any or None
-            The retrieved and validated struct, or ``None`` if not found
-            and ``ignore_failures`` is ``True``.
+        str or bytes or None
+            The retrieved content, or ``None`` if not found
+            and ``ignore_failure`` is ``True``.
         """
+        if mode not in ("b","t"):
+            raise ValueError(f"Invalid retrieve mode '{mode}'")
         if path[0].isalpha():
             path = "%/" + path
         alternatives = self._search_struct_path_alternatives(self, path)
         if not alternatives:
-            if ignore_failures:
+            if ignore_failure:
                 return None
             else:
                 raise FileNotFoundError(f"Resource '{path}' not found.")
         try:
-            with open(file, "r", encoding="utf-8") as f:
+            with open(file, f"r{mode}") as f:
                 content = f.read()
             return content
         except OSError:
-            if ignore_failures:
+            if ignore_failure:
                 return None
             else:
                 raise
+
+    def store_resource(
+        self,
+        path: str,
+        content: str|bytes,
+        *,
+        ignore_failure: bool = False,
+    ) -> None:
+        """Store a resource to the storage backend.
+
+        Parameters
+        ----------
+        path : str
+            Path of the resource to retrieve.
+        content : str | bytes
+            Content of the resource to be stored.
+        ignore_failure : bool
+            When ``True``, return instead of raising if the
+            resource cannot be stored.
+        """
 
     def retrieve_struct(
         self,
         struct_type: type[StructT],
         struct_name: str | None = None,
         *,
-        ignore_failures: bool = False,
+        ignore_failure: bool = False,
     ) -> StructT | None:
         """Retrieve a struct from the filesystem and validate it.
 
@@ -111,7 +146,7 @@ class FileSystemStorage(BaseStorage):
         struct_name : str or None
             Name of the struct to retrieve.  When ``None``, it is derived
             from ``struct_type.storage_name``.
-        ignore_failures : bool
+        ignore_failure : bool
             When ``True``, return ``None`` instead of raising if the struct
             cannot be found.
 
@@ -119,12 +154,12 @@ class FileSystemStorage(BaseStorage):
         -------
         StructT or None
             The retrieved and validated struct, or ``None`` if not found
-            and ``ignore_failures`` is ``True``.
+            and ``ignore_failure`` is ``True``.
 
         Raises
         ------
         FileNotFoundError
-            If the struct is not found and ``ignore_failures`` is ``False``.
+            If the struct is not found and ``ignore_failure`` is ``False``.
         """
         if struct_name is None:
             struct_name = struct_type.storage_name.format(
@@ -136,7 +171,7 @@ class FileSystemStorage(BaseStorage):
             filename = f"%/{struct_name}"
         data = self._load_struct_merged(filename)
         if data is None:
-            if ignore_failures:
+            if ignore_failure:
                 return None
             else:
                 raise FileNotFoundError(
@@ -211,6 +246,10 @@ class FileSystemStorage(BaseStorage):
                 f"%/{struct_type.storage_name}"
             )
         return list(sorted({Path(f).stem for f in files}))
+
+    def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
+        _ = saver_id
+        return FileSystemStorage.checkpoint_saver
 
     # private methods
 

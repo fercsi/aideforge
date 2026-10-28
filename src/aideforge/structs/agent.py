@@ -7,7 +7,7 @@ from .llm import LlmConfig
 from .mcp import McpServerConfig
 from .tool import ToolConfig
 
-__all__ = ["AgentConfig", "Content", "ContextConfig"]
+__all__ = ["AgentConfig", "Content", "ContextConfig", "ContextInfo"]
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are my AI assistant that has no access to any tools. "
@@ -72,6 +72,14 @@ class ContextConfig(BaseModel):
 
     max_input_tokens: int | None = None  # filled automatically
     max_output_tokens: int | None = None  # filled automatically
+
+
+class ContextInfo(ContextConfig):
+    current_tokens: int | None = None
+    last_input_tokens: int | None = None
+    last_output_tokens: int | None = None
+    last_total_tokens: int | None = None
+    last_reasoning_tokens: int | None = None
 
 
 class AgentConfig(BaseModel):

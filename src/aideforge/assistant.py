@@ -1,15 +1,21 @@
+# TODO: failures in prompt/command might prevent session storage
 import re
 import shlex
-import uuid
-from abc import ABC, abstractmethod
+from copy import deepcopy
 from datetime import datetime
-from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, AsyncGenerator, Callable, Generator
 
 from langchain_core.callbacks import BaseCallbackHandler
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-from .agent import AgentBlueprint, AgentRuntime, LlmResponse, LlmError
+from .agent import (
+    ActionRequest,
+    AgentBlueprint,
+    AgentRuntime,
+    ApprovalDecision,
+    LlmError,
+    LlmResponse,
+)
 from .command import (
     BaseCommand,
     CommandExecutor,
@@ -17,11 +23,14 @@ from .command import (
     CommandError,
     default_commands,
 )
+from .storage import BaseStorage, MemoryStorage
+from .structs import AgentConfig, LlmConfig, SessionState
+from .tool import ToolType
 
 __all__ = ["Assistant", "PromptError", "PromptResult"]
 
 PromptError = Annotated[
-    CommandError | LlmError, Field(descriminator="err_code")
+    CommandError | LlmError, Field(descriminator="error_code")
 ]
 
 PromptResult = Annotated[
@@ -38,71 +47,127 @@ class Assistant:
 
     Parameters
     ----------
-    model : str
-        The model identifier, optionally prefixed with a provider using
-        a colon (e.g. ``"openai:gpt-4o"``). If no provider is included
-        and ``model_provider`` is ``None``, a :class:`ValueError` is raised.
-    model_provider : str or None, optional
-        The model provider name (e.g. ``"openai"``). If ``None``, the
-        provider is parsed from *model* if it contains a colon.
-    model_parameters : dict[str, str | int | float | None] or None, optional
-        Additional parameters for model initialization (e.g. temperature).
-    agent_blueprints : list[AgentBlueprint] or None, optional
-        A list of :class:`AgentBlueprint` blueprints to register. Defaults to a
-        single default :class:`AgentBlueprint` if ``None``.
-    default_agent : str or None, optional
-        The name of the agent to use by default. If ``None``, the first
-        agent in the list is used.
-    callbacks : BaseCallbackHandler or list[BaseCallbackHandler] or None, optional
-        Callback handler(s) for observing LLM and tool execution.
     """
 
     def __init__(
         self,
         *,
-        model: str,
-        model_provider: str | None = None,
-        model_parameters: dict[str, str | int | float | None] | None = None,
-        agent_blueprints: list[AgentBlueprint] | None = None,
-        default_agent: str | None = None,  # first agent by default
-        callbacks: BaseCallbackHandler
+        storage: BaseStorage | None = None,
+        session: SessionState | dict[str, Any] | str | None = None,
+        agents: list[AgentBlueprint | AgentConfig | dict[str, Any] | str]
+        | None = None,
+        tool_pool: list[ToolType] | None = None,
+        llm: LlmConfig | None = None,
+        llm_callbacks: BaseCallbackHandler
         | list[BaseCallbackHandler]
         | None = None,
+        commands: list[type[BaseCommand]] | None = None,
+        warning_callback: Callable[str, None] | None = None,
     ):
-        agent_blueprints = agent_blueprints or [AgentBlueprint()]
-        self.agent_blueprints = {}
+        storage = storage or MemoryStorage()
+        self._storage = storage
+
+        # Setup initial agent blueprints
+        agent_blueprints: list[
+            AgentBlueprint
+            | AgentConfig
+            | dict[str, Any]
+            | str  # agent configuration structure
+            | tuple[  # agent type name
+                IdType, dict[str, Any]
+            ]  # agent ID and config for restoration
+        ]
+        agent_blueprints = deepcopy(agents) if agents else [AgentBlueprint()]
+        agent_blueprints.extend(storage.list_structs(AgentConfig))
+        # lazy loaded agent blueprints
+        self._agent_blueprints = {}
         for blueprint in agent_blueprints:
-            if blueprint.name in self.agent_blueprints:
+            name = blueprint
+            if isinstance(blueprint, dict):
+                name = blueprint.get("name")
+            elif not isinstance(
+                blueprint, str
+            ):  # AgentConfig or AgentBlueprint
+                name = blueprint.name
+            if name is None:
+                raise ValueError(f"Agent defined without a name: {blueprint}")
+            if name in self._agent_blueprints:
                 raise ValueError(
-                    f"Multiple agent blueprints added with the name '{blueprint.name}'."
+                    f"Multiple agent blueprints added with the name '{name}'."
                 )
-            self.agent_blueprints[blueprint.name] = blueprint
-        self._agents = {}
-        self.current_agent_name = default_agent or agent_blueprints[0].name
-        self._current_agent = None
-        self._prompt_config = None
-        if callbacks:
-            self.set_callbacks(callbacks)
-        if model_provider is None:
-            if ":" not in model:
-                raise ValueError("Model provider is missing")
-            self._model_provider, self._model = model.lower().split(":", 1)
-        else:
-            self._model_provider = model_provider.lower()
-            self._model = model.lower()
-        self._model_parameters = model_parameters
-        # Model itself is created lazily
+            self._agent_blueprints[name] = blueprint
+        self._agents = {}  # TODO name/ID
+
+        self.session = None
+        self._stored_input_count = 0
+        self.change_session(session)
+
+        self._tool_pool = tool_pool
+
+        # Further setup
+        self._current_llm = llm
+        self._llm_callbacks = []
+        if llm_callbacks:
+            self.set_callbacks(llm_callbacks)
+
         self.command_executor = CommandExecutor(self)
-        self.register_commands(default_commands)
-        self._start_new_session()
+        commands = (commands if commands is not None else []) + default_commands
+        self.register_commands(commands)
 
-    def _start_new_session(self) -> None:
-        """Generate a new unique session ID.
+        self._warning_callback = warning_callback
 
-        This is called on initialization and can be used to reset the
-        session identifier, generating a new UUID.
+    def shutdown(self) -> None:
         """
-        self.session_id = str(uuid.uuid4())
+        It is highly recommended to call shutdown after usage
+
+        Examples
+        --------
+        >>> assistant = Assistant(...)
+        >>> try:
+        ...     # work with assistant
+        ... finally:
+        ...     assistant.shutdown()
+        """
+        self._store_session()
+
+    def _store_session(self) -> None:
+        if self.session is None:
+            return
+        if self.session.input_count > self._stored_input_count:
+            self._storage.store_struct(self.session)
+        self._stored_input_count = self.session.input_count
+
+    def change_session(
+        self, session: SessionState | dict[str, Any] | str | None = None
+    ) -> None:
+        # TODO: if inputs
+        self._store_session()
+        if session is None:
+            self.session = SessionState()
+        elif isinstance(session, str):  # session_id
+            self.session = self._storage.retrieve_struct(SessionState, session)
+        else:
+            self.session = SessionState.model_validate(session)
+
+        self._stored_input_count = self.session.input_count
+        current_agent_name = None
+        current_agent_id = self.session.current_agent
+        for agent_id, agent_state in self.session.agents.items():
+            # agent restoration is also lazy
+            name = agent_state.config.name
+            self._agent_blueprints[name] = (agent_id, agent_state)
+            if current_agent_id == agent_id:
+                current_agent_name = name
+                # currently agents are stored by name internally to handle
+                # it easier from user PoV
+        if current_agent_name is not None:
+            self.current_agent_name = current_agent_name
+        else:
+            self.current_agent_name = next(iter(self._agent_blueprints), None)
+
+        # TODO: if self.session.current_agent:
+        # self.current_agent_name = default_agent or agent_blueprints[0].name
+        # self._current_agent = None
 
     def set_callbacks(
         self, callbacks: BaseCallbackHandler | list[BaseCallbackHandler]
@@ -122,12 +187,12 @@ class Assistant:
             callbacks = callbacks.copy()
         else:
             callbacks = [callbacks]
-        if self._prompt_config is None:
-            self._prompt_config = {"callbacks": callbacks}
-        elif "callbacks" not in self._prompt_config:
-            self._prompt_config["callbacks"] = callbacks
-        else:
-            self._prompt_config["callbacks"].extend(callbacks)
+        self._llm_callbacks.extend(callbacks)
+        for agent in self._agents.values():
+            agent.update_callbacks(callbacks)
+        for blueprint in self._agent_blueprints.values():
+            if isinstance(blueprint, AgentBlueprint):
+                blueprint.update_callbacks(callbacks)
 
     def _get_current_agent(self) -> AgentRuntime:
         """Retrieve or lazily instantiate the current agent runtime.
@@ -148,19 +213,75 @@ class Assistant:
         """
         name = self.current_agent_name
         if name not in self._agents:
-            agent_blueprint = self.agent_blueprints.get(name, None)
-            if agent_blueprint is None:
+            blueprint = self._agent_blueprints.get(name, None)
+            if blueprint is None:
                 raise KeyError(f"Agent {self.current_agent_name} not found")
-            agent = agent_blueprint.instantiate(
-                model=self._model,
-                model_provider=self._model_provider,
-                model_parameters=self._model_parameters,
-#>                config=self._prompt_config,
-            )
+
+            # setup blueprint lazily
+            agent_id = None
+            agent_state = None
+
+            if isinstance(blueprint, tuple):  # agent to restore
+                agent_id, agent_state = blueprint
+                blueprint = agent_state.config
+
+            if isinstance(blueprint, str):  # struct name in store
+                blueprint = self._storage.retrieve_struct(AgentConfig, blueprint)
+            if isinstance(blueprint, dict):
+                blueprint = AgentConfig.model_validate(blueprint)
+            if isinstance(blueprint, AgentConfig):
+                blueprint = AgentBlueprint(
+                    config=blueprint,
+                    tool_pool=self._tool_pool,
+                    storage=self._storage,
+                    callbacks=self._llm_callbacks,
+                    warning_callback=self._warning_callback,
+                )
+                self._agent_blueprints[name] = blueprint
+
+            if agent_state is not None:
+                agent = blueprint.restore(agent_id=agent_id, state=agent_state)
+            else:
+                agent = blueprint.instantiate(llm=self._current_llm)
+                agent_id = agent.agent_id
+            self._current_llm = agent.llm_config
             self._agents[name] = agent
+            # Add runtime state to session (even if previously we had one there)
+            self.session.agents[agent_id] = agent.state
+            self._store_session()
         return self._agents[name]
 
-    async def process_prompt(self, prompt: str) -> PromptResult:
+    def prompt_processor(
+        self,
+        prompt: str,
+    ) -> Generator[ActionRequest, ApprovalDecision, PromptResult]:
+        """
+        >>> processor = assistant.prompt_processor("List me the python files")
+        >>> try:
+        ...   action_req = next(processor)
+        ...   while True:
+        ...     action = input(action_req.description + "\napprove/reject? ")
+        ...     action_req = processor.send(ApprovalDecision(action))
+        ... except StopIteration as exc
+        ...     response = exc.value
+        >>> # process response LLM message, command output or error
+        """
+
+        prompt = prompt.strip()
+        self.session.input_count += 1
+        self.session.history.append(prompt)
+        if prompt.startswith("/"):
+            return self._process_command(prompt)
+
+        agent = self._get_current_agent()
+        response = yield from agent.prompt_processor(prompt)
+        self._store_session()
+        return response
+
+    async def aprompt_processor(
+        self,
+        prompt: str,
+    ) -> AsyncGenerator[ActionRequest | PromptResult, ApprovalDecision]:
         """Process a user prompt and return the result.
 
         If the prompt starts with ``/``, it is treated as a command and
@@ -177,17 +298,34 @@ class Assistant:
         PromptResult
             The result of processing the prompt or command. This may be an
             LLM's response, command output or an error.
+        Examples
+        --------
+        >>> processor = agent.aprompt_processor("List me the python files")
+        >>> response = await anext(processor)
+        >>> while isinstance(response, ActionRequest):
+        ...   action = async_input(response.description + "\napprove/reject? ")
+        ...   response = await processor.asend(ApprovalDecision(action))
+        >>> await processor.aclose()
+        >>> # process response message or error
         """
         prompt = prompt.strip()
+        self.session.input_count += 1
+        self.session.history.append(prompt)
         if prompt.startswith("/"):
-            return self._process_command(prompt)
+            yield self._process_command(prompt)
+            return
 
         agent = self._get_current_agent()
-        result = await agent.process_prompt(
-            prompt,
-            config=self._prompt_config,
-        )
-        return result
+        processor = agent.aprompt_processor(prompt)
+        try:
+            response = await anext(processor)
+            while True:
+                if not isinstance(response, ActionRequest):
+                    self._store_session()
+                decision = yield response
+                response = await processor.asend(decision)
+        finally:
+            await processor.aclose()
 
     def register_commands(self, commands: list[type[BaseCommand]]) -> None:
         """Register assistant commands
@@ -219,10 +357,13 @@ class Assistant:
         PromptResult
             The result of the command execution.
         """
+        # currently no asynchron command exevution possible
         parts = shlex.split(prompt[1:])
         command = parts[0] if parts else ""
         args = parts[1:]
-        return self.command_executor.execute_command(command, args)
+        result = self.command_executor.execute_command(command, args)
+        self._store_session()
+        return result
 
     def eval_prompt_string(self, template: str) -> str:
         """Evaluate a prompt string template with runtime values.
@@ -283,42 +424,119 @@ class Assistant:
         ValueError
             If *var* is not a recognized placeholder.
         """
-        # {agent}           default
-        # {model}           gpt-4o
-        # {model_provider}  openai
-        # {time:hm}         19:35
-        # {time:hms}        19:35:48
-        # {date:ymd}        2026-09-25
-        # {date:md}         09-25
-        # {input_sn}        139
-        # {context_size:k}  128k
-        # {token_count}     - last time? so far? all the agents...?
-        # {session_id}      Session ID
+        # {agent}           Agent's name
+        # {model}           LL Model's name
+        # {model_provider}  LLM provider's name
+        # {time}            Time
+        #                   "hm" - in hh:mm format (default format)
+        #                   "hms" - in hh:mm:ss format
+        # {date}            Date
+        #                   "ymd" - YYYY-MM-DD format (default format)
+        #                   "md" - MM-DD format
+        # {sn}              Serial number of current input
+        # {context}         Context size
+        #                   "a" - automatic format: B if size <10000 (default)
+        #                   "b" - in B
+        #                   "k" - in kB
+        #                   "%" - in % of maximum input tokens
+        # {tokens}          Last run's token count
+        #                   "i"/"o"/"t"/"r" - input, output (default), total, reasoning tokens
+        #                   "a"/"b"/"k" - auto, byte, kbyte size
+        # {session_id}      SessionState ID
         fmt = ""
         if ":" in var:
             var, fmt = var.split(":", 1)
         var = var.strip()
         fmt = fmt.strip()
-        if var == "agent":
+
+        # Session specific info
+        if var == "session_id" and fmt == "":
+            return str(self.session.session_id)
+        if var == "sn" and fmt == "":
+            return str(self.session.input_count + 1)
+
+        # Agent specific info
+        if var == "agent" and fmt == "":
             return self.current_agent_name
-#>        if var == "model":
-#>            agent = self._get_current_agent()
-#>        if var == "model_provider"
+        # NOTE: agents are prepared lazily. If you need info for PS, agent
+        # will be created automatically before PS is displayed!
+        # Because of the lazy load _current_llm would show a "wrong" current
+        # LLM. e.g. "{model}@{agent}" shows the old model with the current
+        if var == "model" and fmt == "":
+            return self._get_current_agent().llm_config.model
+        if var == "model_provider" and fmt == "":
+            return self._get_current_agent().llm_config.provider
+        if var == "context":
+            ctxinfo = self._get_current_agent().context_info
+            size = ctxinfo.current_tokens
+            formatted = _format_size(size, fmt)
+            if formatted is not None:
+                return formatted
+            if fmt == "%":
+                if not size:
+                    return "N/A"
+                maxsize = ctxinfo.max_input_tokens
+                return (
+                    str(round(100 * size / maxsize, 1)).replace(".0", "") + "%"
+                )
+        if var == "tokens":
+            ctxinfo = self._get_current_agent().context_info
+            if fmt == "":
+                fmt = "oa"
+            elif len(fmt) == 1:
+                if fmt in "iot":
+                    fmt += "a"
+                elif fmt in "abk":
+                    fmt = "o" + fmt
+            if len(fmt) == 2:
+                size = None
+                if fmt[0] == "i":
+                    size = ctxinfo.last_input_tokens
+                elif fmt[0] == "o":
+                    size = ctxinfo.last_output_tokens
+                elif fmt[0] == "t":
+                    size = ctxinfo.last_total_tokens
+                elif fmt[0] == "r":
+                    size = ctxinfo.last_reasoning_tokens
+                formatted = _format_size(size, fmt[1])
+                if formatted is not None:
+                    return formatted
+
+        # Time related info
         if var == "time":  # local time, ISO format
             if fmt == "hms":
                 return datetime.now().strftime("%H:%M:%S")
-            else:
+            elif fmt in ("hm", ""):
                 return datetime.now().strftime("%H:%M")
         if var == "date":
             if fmt == "md":
                 return datetime.now().strftime("%m-%d")
-            else:
-                return datetime.now().strftime("%Y:%m:%d")
-        raise ValueError("Unknown prompt string variable '{var}'")
+            elif fmt in ("ymd", ""):
+                return datetime.now().strftime("%Y-%m-%d")
+        orfmt = f" or format '{fmt}'" if fmt else ""
+        raise ValueError(f"Unknown prompt string variable '{var}'{orfmt}.")
 
     def stop_processing(self) -> None:
         """Stop any ongoing prompt processing.
 
         Currently disabled.
         """
-        pass
+        raise NotImplementedError(
+            "Stop processing current run is not implemented, yet"
+        )
+
+
+def _format_size(size: int | None, fmt: str) -> str | None:
+    # None means, formatting refused (this formatter cannot handle it)
+    if not size:
+        # even if no size info, invalid formatters should be refused
+        if fmt in ("a", "b", "k", ""):
+            return "N/A"
+        return None
+    if fmt in ("a", ""):
+        fmt = "b" if size < 10000 else "k"
+    if fmt == "b":
+        return str(size) + "B"
+    if fmt == "k":
+        return str(round(size / 1024, 1)).replace(".0", "") + "kB"
+    return None

@@ -1,3 +1,4 @@
+# TODO manage context info fields
 from __future__ import annotations
 
 import asyncio
@@ -57,18 +58,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .status import LlmError
 from .storage import BaseStorage
-from .structs import AgentConfig, Content, ContextConfig, LlmConfig, ToolPolicy
+from .structs import AgentConfig, AgentState, Content, ContextConfig, ContextInfo, LlmConfig, ToolPolicy
 from .tool import PreconfiguredTool, ToolType
 from .utils import IdType, create_id, deep_merge
 
 __all__ = [
+    "ActionRequest",
     "AgentBlueprint",
     "AgentRuntime",
+    "ApprovalDecision",
     "BaseTool",
     "Content",
     "ContextConfig",
-    "LlmResponse",
     "LlmError",
+    "LlmResponse",
 ]
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -155,11 +158,15 @@ class AgentSetup(BaseModel):
         Configuration parameters for the initial LLM.
     tools : list[BaseTool] or None, optional
         List of tools in the format supported by LangChain.
+    tool_policy : dict[str, ToolPolicy] | None
+        Policy information to tools for agent restoration
     system_message : SystemMessage
         System message containing the system prompt, including steering
         documents and other resources.
     interrupt_on : dict[str, InterruptOnConfig] or None, optional
         Configuration on which tools should be interrupted.
+    threads: list[IdType] | None
+        List of thread IDs for agent restoration.",
     callbacks : BaseCallbackHandler or None, optional
         Callback handler to run on various points of the operation.
     warning_callback : Callable[str, None] or None, optional
@@ -168,7 +175,6 @@ class AgentSetup(BaseModel):
 
     # This is needed to store callback handler, and other callbacks
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
     agent_id: IdType = Field(..., description="Agent's unique ID.")
     name: str = Field(..., description="Agent's type name.")
     llm_config: LlmConfig = Field(
@@ -179,6 +185,10 @@ class AgentSetup(BaseModel):
         description=(
             "List of tools in format supported by LangChain `agent_create`"
         ),
+    )
+    tool_policy: dict[str, ToolPolicy] | None = Field(
+        default=None,
+        description="Policy information to tools for agent restoration",
     )
     system_message: SystemMessage = Field(
         ...,
@@ -192,6 +202,10 @@ class AgentSetup(BaseModel):
     interrupt_on: dict[str, Any] | None = Field(
         default=None,
         description="Configuration on which tools should be interrupted",
+    )
+    threads: list[IdType] | None = Field(
+        default=None,
+        description="List if thread IDs for agent restoration.",
     )
     callbacks: BaseCallbackHandler | None = Field(
         default=None,
@@ -233,6 +247,12 @@ class AgentRuntime:
     config : AgentConfig
         The agent configuration template with tool policies, tools,
         system prompt, context, and LLM defaults.
+    llm_config : LlmConfig
+        Large language model's configuration data
+    tool_policy : dict[str, ToolPolicy]
+        Tool policy information for each tools
+    threads : list[IdType]
+        List of LangGraph thread IDs
 
     Attributes
     ----------
@@ -240,7 +260,7 @@ class AgentRuntime:
         Name of the agent's type
     agent_id : IdType
         Unique ID of agent
-    context_info : ContextConfig
+    context_info : ContextInfo
         Information on context. Rather limited at this point (contains
         max_input_tokens and max_output_tokens)
     setup : AgentSetup
@@ -254,6 +274,7 @@ class AgentRuntime:
         *,
         setup: AgentSetup,
         config: AgentConfig,
+        storage: BaseStorage|None = None,
     ) -> None:
         """Initialize the agent runtime with resolved configuration.
 
@@ -265,17 +286,35 @@ class AgentRuntime:
         config : AgentConfig
             The agent configuration containing tool policies, tools,
             system prompt, context, and LLM defaults.
+        storage : BaseStorage or None, optional
+            Storage backend for retrieving content resources. If ``None``,
+            resources can be implemented only with their inline content.
         """
-        self.setup = setup
-        self.config = config
+        self.setup = setup.model_copy(deep=True)
+        self.config = config.model_copy(deep=True)
 
         self.name = setup.name
         self.agent_id = setup.agent_id
 
-        self._tool_policy = {}
-        for name, tool in config.tools.items():
-            self._tool_policy[name] = ToolPolicy.INHERIT
-            self.set_tool_policy(name, tool.policy)
+        if setup.threads is not None:
+            self.threads = setup.threads
+        else:
+            self.threads = [create_id("thread")]
+
+        if setup.tool_policy is not None:
+            self.tool_policy = setup.tool_policy
+        else:
+            self.tool_policy = {}
+            for name, tool in config.tools.items():
+                self.tool_policy[name] = ToolPolicy.INHERIT
+                self.set_tool_policy(name, tool.policy)
+
+        self.state = AgentState(
+            config=self.config,
+            threads=self.threads,
+            llm=setup.llm_config,
+            tool_policy=self.tool_policy,
+        )
 
         self.change_llm(setup.llm_config)
 
@@ -283,14 +322,16 @@ class AgentRuntime:
         if isinstance(self._callbacks, BaseCallbackHandler):
             self._callbacks = [self._callbacks]
 
-        self._threads = []
-
         self._warning_callback = setup.warning_callback
 
-        checkpointer = InMemorySaver()  # TODO: do we want persistent store
+        self._storage = storage
+        if storage:
+            checkpointer = storage.get_checkpointer()
+        else:
+            checkpointer = InMemorySaver()
         middleware = [
             before_model(self._limit_history),
-            # awrap_model_call(self._route_model),
+            # awrap_model_call(self._aroute_model),
             # awrap_model_call does not work in LangGraph, yet
         ]
         if setup.interrupt_on:  # Tool execution control
@@ -299,16 +340,24 @@ class AgentRuntime:
             )
         self._agent = create_agent(
             model=self._llmodel,
-            tools=setup.tools,
+            tools=setup.tools.copy(),
             system_prompt=self.setup.system_message,
             name=self.name,
             middleware=middleware,
             checkpointer=checkpointer,
         )
 
-        self._threads_lock = asyncio.Lock()
+        self.threads_lock = asyncio.Lock()
 
-    async def prompt_processor(
+    def prompt_processor(
+        self,
+        prompt: str,
+        *,
+        thread_idx: int = 0,
+    ) -> Generator[ActionRequest, ApprovalDecision, LlmResponse | LlmError]:
+        raise NotImplementedError("Synchron version of prompt processor is not implemented, yet")
+
+    async def aprompt_processor(
         self,
         prompt: str,
         *,
@@ -342,23 +391,24 @@ class AgentRuntime:
 
         Examples
         --------
-        >>> processor = agent.prompt_processor("List me the python files")
+        >>> processor = agent.aprompt_processor("List me the python files")
         >>> response = await anext(processor)
         >>> while isinstance(response, ActionRequest):
         ...   action = async_input(response.description + "\napprove/reject? ")
         ...   response = await processor.asend(ApprovalDecision(action))
+        >>> processor.aclose()
         >>> # process response message or error
         """
-        async with self._threads_lock:  # to be sure
-            if thread_idx >= len(self._threads):
-                self._threads.extend(
-                    [None] * (thread_idx - len(self._threads) + 1)
+        async with self.threads_lock:  # to be sure
+            if thread_idx >= len(self.threads):
+                self.threads.extend(
+                    [None] * (thread_idx - len(self.threads) + 1)
                 )
-            if self._threads[thread_idx] is None:
-                self._threads[thread_idx] = create_id("thread")
-            thread_id = self._threads[thread_idx]
+            if self.threads[thread_idx] is None:
+                self.threads[thread_idx] = create_id("thread")
+            thread_id = self.threads[thread_idx]
 
-        tool_policy = self._tool_policy.copy()
+        tool_policy = self.tool_policy.copy()
         try:
             message = HumanMessage(content=prompt)
 
@@ -367,6 +417,8 @@ class AgentRuntime:
             }
             if self._callbacks:
                 config["callbacks"] = self._callbacks
+            state = await self._agent.aget_state(config)
+            prev_msg_cnt = len(state.values["messages"]) if "messages" in state.values else 0
             response = await self._agent.ainvoke(
                 {"messages": [message]}, config=config
             )
@@ -392,10 +444,10 @@ class AgentRuntime:
                                 )
 
                             if decision == ApprovalDecision.ALWAYS:
-                                self._tool_policy[tool_name] = ToolPolicy.ALLOW
+                                self.tool_policy[tool_name] = ToolPolicy.ALLOW
                             elif decision == ApprovalDecision.ALWAYS_ALL_TOOLS:
-                                for name in self._tool_policy:
-                                    self._tool_policy[name] = ToolPolicy.ALLOW
+                                for name in self.tool_policy:
+                                    self.tool_policy[name] = ToolPolicy.ALLOW
 
                             if decision in (
                                 ApprovalDecision.ALWAYS,
@@ -417,8 +469,29 @@ class AgentRuntime:
                     Command(resume={"decisions": decisions}), config=config
                 )
                 state = await self._agent.aget_state(config)
-            # TODO: self._context_size +=
-            # result["messages"][-1].response_metadata["token_usage"]["total_tokens"]
+
+            ctxinfo = self.context_info
+            ctxinfo.last_input_tokens = 0
+            ctxinfo.last_output_tokens = 0
+            ctxinfo.last_total_tokens = 0
+            ctxinfo.last_reasoning_tokens = 0
+#>            print(len(state.values["messages"]))
+            for msg in state.values["messages"][prev_msg_cnt:]:
+                if msg.type != "ai":
+                    continue
+                usage = msg.usage_metadata if hasattr(msg, "usage_metadata") else {}
+                details = usage.get("output_token_details", {})
+                ctxinfo.last_input_tokens += usage.get("input_tokens", 0)
+                ctxinfo.last_output_tokens = usage.get("output_tokens", 0)
+                ctxinfo.last_total_tokens = usage.get("total_tokens", 0)
+                ctxinfo.last_reasoning_tokens = details.get("reasoning", 0)
+            message = response["messages"][-1]
+            usage = message.usage_metadata if hasattr(message, "usage_metadata") else {}
+            details = usage.get("output_token_details", {})
+            context_usage = usage.get("input_tokens", 0) + usage.get("output_tokens", 0) - details.get("reasoning", 0)
+            ctxinfo.current_tokens = context_usage
+            print(self.context_info)
+
             yield LlmResponse(content=response["messages"][-1].content)
         except Exception as exc:
             # TODO: Somehow separate LLM and other errors:
@@ -440,11 +513,12 @@ class AgentRuntime:
         llm_config : LlmConfig
             The new LLM configuration to use for subsequent processing.
         """
-        if hasattr(self, "_llm_config"):
+        if hasattr(self, "llm_config"):
             raise NotImplementedError(
                 "Changing LLM during the session is not supported, yet."
             )
-        self._llm_config = llm_config
+        self.llm_config = llm_config.model_copy()
+        self.state.llm = self.llm_config
         self._llmodel = _get_model_instance(llm_config)  # LLM store is global
         self._init_context_config()
 
@@ -464,7 +538,7 @@ class AgentRuntime:
         ValueError
             If the agent does not have a tool with the given name.
         """
-        if tool_name not in self._tool_policy:
+        if tool_name not in self.tool_policy:
             raise ValueError(
                 f"Agent does not have a tool with name '{tool_name}'"
             )
@@ -472,7 +546,12 @@ class AgentRuntime:
             policy = self.config.default_tool_policy
             if policy == ToolPolicy.INHERIT:
                 policy = ToolPolicy.ASK  # global default is hard coded!
-        self._tool_policy[tool_name] = policy
+        self.tool_policy[tool_name] = policy
+
+
+    def update_callbacks(self, callbacks:BaseCallbackHandler | list[BaseCallbackHandler]) -> None:
+        callbacks = callbacks if isinstance(callbacks, list) else [callbacks]
+        self._callbacks = callbacks
 
     def _init_context_config(self) -> None:
         """Resolve and validate the context configuration for the agent.
@@ -487,19 +566,19 @@ class AgentRuntime:
             If ``max_input_tokens`` exceeds the model's maximum context
             size.
         """
-        cfg = self.config.context.model_copy()
+        ctxinfo = ContextInfo.model_validate(self.config.context.model_dump())
         model = self._llmodel
         max_input_tokens = model.profile["max_input_tokens"]
-        if cfg.max_input_tokens is None:
-            cfg.max_input_tokens = max_input_tokens
-        elif cfg.max_input_tokens > max_input_tokens:
+        if ctxinfo.max_input_tokens is None:
+            ctxinfo.max_input_tokens = max_input_tokens
+        elif ctxinfo.max_input_tokens > max_input_tokens:
             raise ValueError(
-                f"context_config.max_input_tokens {cfg.max_input_tokens} "
+                f"context_config.max_input_tokens {ctxinfo.max_input_tokens} "
                 "exceeds the model's maximum context size."
             )
         # don't check if user set output token count, silently change it
-        cfg.max_output_tokens = model.profile["max_output_tokens"]
-        self.context_info = cfg
+        ctxinfo.max_output_tokens = model.profile["max_output_tokens"]
+        self.context_info = ctxinfo
 
     def _limit_history(
         self, state: dict[str, Any], runtime: Runtime
@@ -549,25 +628,52 @@ class AgentRuntime:
             ]
         }
 
-    async def _route_model(
+
+    def _route_model(
         self,
-        request: ModelRequest[Any],
-        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
-    ) -> ModelCallResult[Any]:
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelCallResult:
+        """Route a model call, overriding the model with the current one.
+
+        Registered as a ``wrap_model_call`` middleware callback.
+
+        Parameters
+        ----------
+        request : ModelRequest
+            The incoming model request.
+        handler : Callable[[ModelRequest], ModelResponse]
+            The next handler in the middleware chain.
+
+        Returns
+        -------
+        ModelCallResult
+            The result from the overridden model call.
+        """
+        # @wrap_model_call method
+        # awrap_model_call does not work in LangGraph
+        model = self._llmodel
+        return handler(request.override(model=model))
+
+    async def _aroute_model(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelCallResult:
         """Route a model call, overriding the model with the current one.
 
         Registered as a ``awrap_model_call`` middleware callback.
 
         Parameters
         ----------
-        request : ModelRequest[Any]
+        request : ModelRequest
             The incoming model request.
-        handler : Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]]
+        handler : Callable[[ModelRequest], Awaitable[ModelResponse]]
             The next handler in the middleware chain.
 
         Returns
         -------
-        ModelCallResult[Any]
+        ModelCallResult
             The result from the overridden model call.
         """
         # @awrap_model_call method
@@ -732,7 +838,52 @@ class AgentBlueprint:
             interrupt_on=self._create_interrupt_on(tools),
             callbacks=self._callbacks,
         )
-        return AgentRuntime(setup=setup, config=self.config)
+        return AgentRuntime(setup=setup, config=self.config, storage=self._storage)
+
+    def restore(
+        self,
+        agent_id: IdType,
+        state: AgentState,
+    ) -> AgentRuntime:
+        """Create an :class:`AgentRuntime` from this agent's configuration.
+
+        Resolves the model, tools, context config, and system message,
+        then constructs an :class:`AgentRuntime` instance.
+
+        Parameters
+        ----------
+        agent_id : IdType
+        state : AgentState
+
+        Returns
+        -------
+        AgentRuntime
+            A runtime instance configured with the resolved model, tools,
+            system message, and context config.
+
+        Raises
+        ------
+        ValueError
+            If a tool is invalid, or if context configuration exceeds model
+            limits.
+        """
+        tools = self._prepare_tools()
+        setup = AgentSetup(
+            agent_id=gent_id,
+            name=self.name,
+            threads=state.threads,
+            llm_config=state.llm,
+            tools=tools,
+            tool_policy=state.tool_policy,
+            system_message=self._create_system_message(),
+            interrupt_on=self._create_interrupt_on(tools),
+            callbacks=self._callbacks,
+        )
+        return AgentRuntime(setup=setup, config=self.config, storage=self._storage)
+
+    def update_callbacks(self, callbacks:BaseCallbackHandler | list[BaseCallbackHandler]) -> None:
+        callbacks = callbacks if isinstance(callbacks, list) else [callbacks]
+        self._callbacks = callbacks
 
     def _prepare_llm_config(
         self, llm: LlmConfig | None, force_llm: bool
