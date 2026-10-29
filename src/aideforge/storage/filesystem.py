@@ -15,6 +15,7 @@ from aideforge.structs import (
     BaseIncrementalStruct,
     BaseEvent,
     ChangeProperty,
+    StructProxy,
 )
 from aideforge.utils import deep_merge, remove_nones
 from .abc import BaseStorage, StructT
@@ -163,7 +164,7 @@ class FileSystemStorage(BaseStorage):
         """
         if struct_name is None:
             struct_name = struct_type.storage_name.format(
-                struct=_Proxy(struct_type)
+                struct=StructProxy(struct_type)
             )
         if struct_type.kinds is not None:
             filename = f"%/{struct_type.kinds}/{struct_name}"
@@ -519,41 +520,3 @@ class FileSystemStorage(BaseStorage):
         else:
             struct_paths = [struct_path]
         return struct_paths
-
-
-class _Proxy:
-    """Internal proxy that makes a ``BaseStruct`` subclass behave like an
-    instance of its default values."""
-
-    def __init__(self, target: type[BaseStruct]) -> None:
-        """Initialize the proxy for a given struct class.
-
-        Parameters
-        ----------
-        target : type[BaseStruct]
-            The ``BaseStruct`` subclass to proxy.
-        """
-        self._target = target
-
-    def __getattr__(self, name: str) -> Any:
-        """Retrieve an attribute from the proxied class.
-
-        Parameters
-        ----------
-        name : str
-            Attribute name to retrieve.
-
-        Returns
-        -------
-        Any
-            The class-level attribute value (for meta parameters) or the
-            default value of the matching structure field.
-        """
-        if hasattr(self._target, name):  # meta parameter
-            return getattr(self._target, name)
-        field_info = self._target.model_fields.get(name)
-        if field_info is None:
-            raise AttributeError(
-                f"'{self._target.__name__}' object has no attribute '{name}'"
-            )
-        return field_info.default

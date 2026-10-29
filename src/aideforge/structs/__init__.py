@@ -3,6 +3,7 @@ from .abc import (
     BaseIncrementalStruct,
     BaseStruct,
     ChangeProperty,
+    StructProxy,
 )
 from .agent import AgentConfig, Content, ContextConfig, ContextInfo
 from .common import Switch, ToolPolicy

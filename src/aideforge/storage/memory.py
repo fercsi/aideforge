@@ -9,6 +9,7 @@ from aideforge.structs import (
     BaseIncrementalStruct,
     BaseEvent,
     ChangeProperty,
+    StructProxy,
 )
 from .abc import BaseStorage, StructT
 
@@ -132,7 +133,7 @@ class MemoryStorage(BaseStorage):
             Name under which the struct is stored.  When ``None``, it is
             derived from ``struct.storage_name``.
         """
-        category, struct_name = _get_struct_keys(struct_type, struct_name)
+        category, struct_name = _get_struct_keys(struct, struct_name)
         structs = MemoryStorage.structs
         structs[category][struct_name] = struct.model_copy(deep=True)
 
@@ -156,7 +157,7 @@ class MemoryStorage(BaseStorage):
             Name under which the struct is stored.  When ``None``, a
             default name is derived from ``struct.storage_name``.
         """
-        category, struct_name = _get_struct_keys(struct_type, struct_name)
+        category, struct_name = _get_struct_keys(struct, struct_name)
         structs = MemoryStorage.structs
         if category in structs and struct_name in structs[category]:
             # Apply to the stored one!
@@ -195,15 +196,15 @@ class MemoryStorage(BaseStorage):
 
     def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
         _ = saver_id
-        return FileSystemStorage.checkpoint_saver
+        return MemoryStorage.checkpoint_saver
 
 def _get_struct_keys(
-    struct_type: type[StructT],
+    struct: StructT | type[StructT],
     struct_name: str | None = None,
 ) -> tuple[str, str]:
     if struct_name is None:
-        struct_name = struct_type.storage_name.format(
-            struct=_Proxy(struct_type)
+        struct_name = struct.storage_name.format(
+            struct=StructProxy(struct)
         )
-    category = struct_type.kinds or struct_type.kind
+    category = struct.kinds or struct.kind
     return category, struct_name

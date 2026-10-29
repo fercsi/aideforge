@@ -57,7 +57,7 @@ class Assistant:
         agents: list[AgentBlueprint | AgentConfig | dict[str, Any] | str]
         | None = None,
         tool_pool: list[ToolType] | None = None,
-        llm: LlmConfig | None = None,
+        llm: LlmConfig | dict[str, Any] | None = None,
         llm_callbacks: BaseCallbackHandler
         | list[BaseCallbackHandler]
         | None = None,
@@ -80,7 +80,7 @@ class Assistant:
         agent_blueprints = deepcopy(agents) if agents else [AgentBlueprint()]
         agent_blueprints.extend(storage.list_structs(AgentConfig))
         # lazy loaded agent blueprints
-        self._agent_blueprints = {}
+        self.agent_blueprints = {}
         for blueprint in agent_blueprints:
             name = blueprint
             if isinstance(blueprint, dict):
@@ -91,11 +91,11 @@ class Assistant:
                 name = blueprint.name
             if name is None:
                 raise ValueError(f"Agent defined without a name: {blueprint}")
-            if name in self._agent_blueprints:
+            if name in self.agent_blueprints:
                 raise ValueError(
                     f"Multiple agent blueprints added with the name '{name}'."
                 )
-            self._agent_blueprints[name] = blueprint
+            self.agent_blueprints[name] = blueprint
         self._agents = {}  # TODO name/ID
 
         self.session = None
@@ -105,6 +105,8 @@ class Assistant:
         self._tool_pool = tool_pool
 
         # Further setup
+        if isinstance(llm, dict):
+            llm = LlmConfig.model_validate(llm)
         self._current_llm = llm
         self._llm_callbacks = []
         if llm_callbacks:
@@ -155,7 +157,7 @@ class Assistant:
         for agent_id, agent_state in self.session.agents.items():
             # agent restoration is also lazy
             name = agent_state.config.name
-            self._agent_blueprints[name] = (agent_id, agent_state)
+            self.agent_blueprints[name] = (agent_id, agent_state)
             if current_agent_id == agent_id:
                 current_agent_name = name
                 # currently agents are stored by name internally to handle
@@ -163,7 +165,7 @@ class Assistant:
         if current_agent_name is not None:
             self.current_agent_name = current_agent_name
         else:
-            self.current_agent_name = next(iter(self._agent_blueprints), None)
+            self.current_agent_name = next(iter(self.agent_blueprints), None)
 
         # TODO: if self.session.current_agent:
         # self.current_agent_name = default_agent or agent_blueprints[0].name
@@ -190,7 +192,7 @@ class Assistant:
         self._llm_callbacks.extend(callbacks)
         for agent in self._agents.values():
             agent.update_callbacks(callbacks)
-        for blueprint in self._agent_blueprints.values():
+        for blueprint in self.agent_blueprints.values():
             if isinstance(blueprint, AgentBlueprint):
                 blueprint.update_callbacks(callbacks)
 
@@ -213,7 +215,7 @@ class Assistant:
         """
         name = self.current_agent_name
         if name not in self._agents:
-            blueprint = self._agent_blueprints.get(name, None)
+            blueprint = self.agent_blueprints.get(name, None)
             if blueprint is None:
                 raise KeyError(f"Agent {self.current_agent_name} not found")
 
@@ -237,7 +239,7 @@ class Assistant:
                     callbacks=self._llm_callbacks,
                     warning_callback=self._warning_callback,
                 )
-                self._agent_blueprints[name] = blueprint
+                self.agent_blueprints[name] = blueprint
 
             if agent_state is not None:
                 agent = blueprint.restore(agent_id=agent_id, state=agent_state)

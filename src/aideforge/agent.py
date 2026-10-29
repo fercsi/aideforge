@@ -167,7 +167,7 @@ class AgentSetup(BaseModel):
         Configuration on which tools should be interrupted.
     threads: list[IdType] | None
         List of thread IDs for agent restoration.",
-    callbacks : BaseCallbackHandler or None, optional
+    callbacks : BaseCallbackHandler o4 list[BaseCallbackHandler] or None, optional
         Callback handler to run on various points of the operation.
     warning_callback : Callable[str, None] or None, optional
         Callback routine to run if a warning should be sent to user.
@@ -207,7 +207,7 @@ class AgentSetup(BaseModel):
         default=None,
         description="List if thread IDs for agent restoration.",
     )
-    callbacks: BaseCallbackHandler | None = Field(
+    callbacks: BaseCallbackHandler | list[BaseCallbackHandler] | None = Field(
         default=None,
         description=(
             "Callback handler to run on various points of the operation.",
@@ -326,7 +326,7 @@ class AgentRuntime:
 
         self._storage = storage
         if storage:
-            checkpointer = storage.get_checkpointer()
+            checkpointer = storage.get_checkpoint_saver()
         else:
             checkpointer = InMemorySaver()
         middleware = [
@@ -338,9 +338,10 @@ class AgentRuntime:
             middleware.append(
                 HumanInTheLoopMiddleware(interrupt_on=setup.interrupt_on)
             )
+        tools = setup.tools and setup.tools.copy()
         self._agent = create_agent(
             model=self._llmodel,
-            tools=setup.tools.copy(),
+            tools=tools,
             system_prompt=self.setup.system_message,
             name=self.name,
             middleware=middleware,

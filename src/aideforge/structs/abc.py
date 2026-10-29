@@ -11,6 +11,7 @@ __all__ = [
     "BaseStruct",
     "ChangeProperty",
     "PropertyChangeType",
+    "StructProxy",
 ]
 
 
@@ -193,3 +194,40 @@ class ChangeProperty(BaseEvent):
         )
         event.change(struct)
         struct.events.append(event)
+
+class StructProxy:
+    """Internal proxy that makes a ``BaseStruct`` subclass behave like an
+    instance of its default values."""
+
+    def __init__(self, target: type[BaseStruct]) -> None:
+        """Initialize the proxy for a given struct class.
+
+        Parameters
+        ----------
+        target : type[BaseStruct]
+            The ``BaseStruct`` subclass to proxy.
+        """
+        self._target = target
+
+    def __getattr__(self, name: str) -> Any:
+        """Retrieve an attribute from the proxied class.
+
+        Parameters
+        ----------
+        name : str
+            Attribute name to retrieve.
+
+        Returns
+        -------
+        Any
+            The class-level attribute value (for meta parameters) or the
+            default value of the matching structure field.
+        """
+        if hasattr(self._target, name):  # meta parameter
+            return getattr(self._target, name)
+        field_info = self._target.model_fields.get(name)
+        if field_info is None:
+            raise AttributeError(
+                f"'{self._target.__name__}' object has no attribute '{name}'"
+            )
+        return field_info.default
