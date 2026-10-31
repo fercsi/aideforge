@@ -28,6 +28,9 @@ class ThemeColor(BaseModel):
     A tuple pairs a foreground color with a background color, single value
     refers to a forground color (like ``(color, None)``).
 
+    Note: ``ThemeColor`` with default values can be used also for converted
+    color set (see also ``to_term_colors``, ``to_web_colors``)
+
     Attributes
     ----------
     prompt_string : ColorType, optional
@@ -49,10 +52,13 @@ class ThemeColor(BaseModel):
     error : ColorType, optional
         Color for application level error messages.
     """
+    # Default values must be always None!
 
     # Input
     prompt_string: ColorType = None
+    tool_prompt_string: ColorType = None
     input: ColorType = None
+    tool_input: ColorType = None
     # Assistant
     thinking: ColorType = None
     thinking_em: ColorType = None
@@ -100,6 +106,7 @@ theme_collection: dict[str, Theme] = {
     "default": Theme(
         name="default",
         colors={
+            "tool_prompt_string": 14,
             "thinking": 8,
             "thinking_em": 7,
             "response": 11,

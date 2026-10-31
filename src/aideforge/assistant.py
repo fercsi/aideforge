@@ -3,7 +3,7 @@ import re
 import shlex
 from copy import deepcopy
 from datetime import datetime
-from typing import Annotated, Any, AsyncGenerator, Callable, Generator
+from typing import Annotated, Any, AsyncGenerator, Callable, Generator, TypeAlias
 
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import Field
@@ -24,10 +24,19 @@ from .command import (
     default_commands,
 )
 from .storage import BaseStorage, MemoryStorage
-from .structs import AgentConfig, LlmConfig, SessionState
+from .structs import AgentConfig, AssistantSettings, BaseSettings, LlmConfig, SessionState, Theme
+from .structs.settings import get_settings_type, validate_settings
+from .structs.theme import theme_collection
 from .tool import ToolType
 
-__all__ = ["Assistant", "PromptError", "PromptResult"]
+__all__ = ["Assistant", "PromptError", "PromptResult", "PSEvalExtender"]
+
+DEFAULT_DESCRIPTION = (
+    "I’m a versatile AI assistant that can leverage multiple specialized "
+    "agents and tools to solve complex tasks. I adapt to your needs, "
+    "coordinate different capabilities, and help you turn ideas into "
+    "practical results."
+)
 
 PromptError = Annotated[
     CommandError | LlmError, Field(descriminator="error_code")
@@ -37,6 +46,33 @@ PromptResult = Annotated[
     LlmResponse | CommandSuccess | PromptError, Field(descriminator="status")
 ]
 
+
+#: PSEvalExtender contract.
+#:
+#: Function contract for processing additional variables during prompt
+#: string evaluation.
+#:
+#: WARNING: This function must not raise exceptions when a variable or
+#: formatting option is unsupported. It must return ``None`` instead.
+#:
+#: Signature
+#: ---------
+#: ``(var: str, fmt: str) -> str | None``
+#:
+#: Parameters
+#: ----------
+#: var : str
+#:     Template variable name.
+#: fmt : str
+#:     Template variable formatting option. Empty string (``""``) if omitted.
+#:
+#: Returns
+#: -------
+#: str or None
+#:     The string value to substitute for the variable placeholder.
+#:     Returns ``None`` if the variable or formatting option is unsupported,
+#:     instead of raising an exception.
+PSEvalExtender:TypeAlias = Callable[[str, str], str | None]
 
 class Assistant:
     """AI agent and chat manager.
@@ -53,6 +89,7 @@ class Assistant:
         self,
         *,
         storage: BaseStorage | None = None,
+        default_settings: BaseSettings | dict[str, Any] | list[BaseSettings | dict[str, Any]] | None = None,
         session: SessionState | dict[str, Any] | str | None = None,
         agents: list[AgentBlueprint | AgentConfig | dict[str, Any] | str]
         | None = None,
@@ -63,9 +100,34 @@ class Assistant:
         | None = None,
         commands: list[type[BaseCommand]] | None = None,
         warning_callback: Callable[str, None] | None = None,
+        description: str = DEFAULT_DESCRIPTION,
     ):
         storage = storage or MemoryStorage()
-        self._storage = storage
+        self.storage = storage
+
+        # Setup overall settings
+        if default_settings is None:
+            default_settings = [AssistantSettings()]
+        elif not isinstance(default_settings, list):
+            default_settings = [default_settings]
+        self._settings = {}
+        for settings in default_settings:
+            if isinstance(settings, dict):
+                if "scope" not in settings:
+                    settings["scope"] = "assistant"
+                settings = validate_settings(settings)
+            if settings.scope in self._settings:
+                raise ValueError(f"Multiple settings has been given with the same scope: '{settings.scope}'")
+            self._settings[settings.scope] = settings
+        if "assistant" not in self._settings:
+            self._settings["assistant"] = AssistantSettings()
+        stored_settings = storage.list_structs(BaseSettings)
+        for name in stored_settings:
+            settings_type = get_settings_type(name)
+            # TODO: Solve merging structs. difficulty: unchangesd fields
+            # are enumerated and will not be able to merge.
+            # So now, simply overwrite
+            self._settings[name] = storage.load_struct(settings_type, name)
 
         # Setup initial agent blueprints
         agent_blueprints: list[
@@ -105,8 +167,11 @@ class Assistant:
         self._tool_pool = tool_pool
 
         # Further setup
+        llm = llm or self._settings["assistant"].llm
         if isinstance(llm, dict):
             llm = LlmConfig.model_validate(llm)
+        elif isinstance(llm, LlmConfig):
+            llm = llm.model_copy(deep=True)
         self._current_llm = llm
         self._llm_callbacks = []
         if llm_callbacks:
@@ -117,6 +182,9 @@ class Assistant:
         self.register_commands(commands)
 
         self._warning_callback = warning_callback
+
+        self.description = description
+        self._themes = theme_collection.copy()
 
     def shutdown(self) -> None:
         """
@@ -132,13 +200,6 @@ class Assistant:
         """
         self._store_session()
 
-    def _store_session(self) -> None:
-        if self.session is None:
-            return
-        if self.session.input_count > self._stored_input_count:
-            self._storage.store_struct(self.session)
-        self._stored_input_count = self.session.input_count
-
     def change_session(
         self, session: SessionState | dict[str, Any] | str | None = None
     ) -> None:
@@ -147,7 +208,7 @@ class Assistant:
         if session is None:
             self.session = SessionState()
         elif isinstance(session, str):  # session_id
-            self.session = self._storage.retrieve_struct(SessionState, session)
+            self.session = self.storage.retrieve_struct(SessionState, session)
         else:
             self.session = SessionState.model_validate(session)
 
@@ -195,63 +256,6 @@ class Assistant:
         for blueprint in self.agent_blueprints.values():
             if isinstance(blueprint, AgentBlueprint):
                 blueprint.update_callbacks(callbacks)
-
-    def _get_current_agent(self) -> AgentRuntime:
-        """Retrieve or lazily instantiate the current agent runtime.
-
-        If the current agent has not yet been instantiated, it is created
-        from its blueprint using the assistant's model configuration.
-
-        Returns
-        -------
-        AgentRuntime
-            The runtime instance for the currently selected agent.
-
-        Raises
-        ------
-        KeyError
-            If the current agent name does not correspond to a registered
-            agent blueprint.
-        """
-        name = self.current_agent_name
-        if name not in self._agents:
-            blueprint = self.agent_blueprints.get(name, None)
-            if blueprint is None:
-                raise KeyError(f"Agent {self.current_agent_name} not found")
-
-            # setup blueprint lazily
-            agent_id = None
-            agent_state = None
-
-            if isinstance(blueprint, tuple):  # agent to restore
-                agent_id, agent_state = blueprint
-                blueprint = agent_state.config
-
-            if isinstance(blueprint, str):  # struct name in store
-                blueprint = self._storage.retrieve_struct(AgentConfig, blueprint)
-            if isinstance(blueprint, dict):
-                blueprint = AgentConfig.model_validate(blueprint)
-            if isinstance(blueprint, AgentConfig):
-                blueprint = AgentBlueprint(
-                    config=blueprint,
-                    tool_pool=self._tool_pool,
-                    storage=self._storage,
-                    callbacks=self._llm_callbacks,
-                    warning_callback=self._warning_callback,
-                )
-                self.agent_blueprints[name] = blueprint
-
-            if agent_state is not None:
-                agent = blueprint.restore(agent_id=agent_id, state=agent_state)
-            else:
-                agent = blueprint.instantiate(llm=self._current_llm)
-                agent_id = agent.agent_id
-            self._current_llm = agent.llm_config
-            self._agents[name] = agent
-            # Add runtime state to session (even if previously we had one there)
-            self.session.agents[agent_id] = agent.state
-            self._store_session()
-        return self._agents[name]
 
     def prompt_processor(
         self,
@@ -302,10 +306,10 @@ class Assistant:
             LLM's response, command output or an error.
         Examples
         --------
-        >>> processor = agent.aprompt_processor("List me the python files")
+        >>> processor = assistant.aprompt_processor("List me the python files")
         >>> response = await anext(processor)
         >>> while isinstance(response, ActionRequest):
-        ...   action = async_input(response.description + "\napprove/reject? ")
+        ...   action = await async_input(response.description + "\napprove/reject? ")
         ...   response = await processor.asend(ApprovalDecision(action))
         >>> await processor.aclose()
         >>> # process response message or error
@@ -341,33 +345,7 @@ class Assistant:
         for command in commands:
             self.command_executor.register_command(command)
 
-    def _process_command(self, prompt: str) -> PromptResult:
-        """Parse and execute a slash-command from a prompt.
-
-        Processes the prompt in a traditional shell-like manner: the first
-        item is treated as the command, and the remaining items are passed
-        as command arguments.
-
-        Parameters
-        ----------
-        prompt : str
-            The prompt string. The method assumes that the prompt starts
-            with the ``/`` character.
-
-        Returns
-        -------
-        PromptResult
-            The result of the command execution.
-        """
-        # currently no asynchron command exevution possible
-        parts = shlex.split(prompt[1:])
-        command = parts[0] if parts else ""
-        args = parts[1:]
-        result = self.command_executor.execute_command(command, args)
-        self._store_session()
-        return result
-
-    def eval_prompt_string(self, template: str) -> str:
+    def eval_prompt_string(self, template: str, extender: PSEvalExtender|None=None) -> str:
         """Evaluate a prompt string template with runtime values.
 
         Single-brace placeholders ``{var}`` are replaced with their
@@ -399,13 +377,136 @@ class Assistant:
 
         ps = re.sub(
             r"{([^{}]*)}",
-            lambda m: self._ps_replacer(m.group(1)),
+            lambda m: self._ps_replacer(m.group(1), extender),
             ps,
         )
 
         return ps.replace("\0", "{").replace("\1", "}")
 
-    def _ps_replacer(self, var: str) -> str:
+    def get_settings(self, scope: str) -> BaseSettings | None:
+        return self._settings.get(scope)
+
+    def set_settings(self, settings: BaseSettings| dict[str, Any]) ->None:
+        # overwrite settings
+        if isinstance(settings, dict):
+            settings = validate_settings(settings)
+        self._settings[settings.scope] = settings
+
+    def ensure_settings(self, settings: BaseSettings| dict[str, Any]) ->None:
+        # set settings if not given
+        if isinstance(settings, dict):
+            settings = validate_settings(settings)
+        if settings.scope not in self._settings:
+            self._settings[settings.scope] = settings
+
+    def list_themes(self) -> list[str]:
+        theme_names = self._storage.list_structs(Theme)
+        names_set = set(self._themes.keys()) | {theme_names}
+        return list(sorted(names_set))
+
+    def get_theme(self, theme_name: str) -> Theme:
+        if theme_name in self._themes:
+            return self._themes[theme_name]
+        theme = self._storage.retrieve_struct(Theme, theme_name, ignore_errors=True)
+        if theme is None:
+            raise ValueError("Theme '{theme_name}' not found")
+        # TODO: if cached theme cannot be edited while using assistant
+        self._themes[theme_name] = theme
+        return theme
+
+    # PRIVATE METHODS
+
+    def _store_session(self) -> None:
+        if self.session is None:
+            return
+        if self.session.input_count > self._stored_input_count:
+            self.storage.store_struct(self.session)
+        self._stored_input_count = self.session.input_count
+
+    def _get_current_agent(self) -> AgentRuntime:
+        """Retrieve or lazily instantiate the current agent runtime.
+
+        If the current agent has not yet been instantiated, it is created
+        from its blueprint using the assistant's model configuration.
+
+        Returns
+        -------
+        AgentRuntime
+            The runtime instance for the currently selected agent.
+
+        Raises
+        ------
+        KeyError
+            If the current agent name does not correspond to a registered
+            agent blueprint.
+        """
+        name = self.current_agent_name
+        if name not in self._agents:
+            blueprint = self.agent_blueprints.get(name, None)
+            if blueprint is None:
+                raise KeyError(f"Agent {self.current_agent_name} not found")
+
+            # setup blueprint lazily
+            agent_id = None
+            agent_state = None
+
+            if isinstance(blueprint, tuple):  # agent to restore
+                agent_id, agent_state = blueprint
+                blueprint = agent_state.config
+
+            if isinstance(blueprint, str):  # struct name in store
+                blueprint = self.storage.retrieve_struct(AgentConfig, blueprint)
+            if isinstance(blueprint, dict):
+                blueprint = AgentConfig.model_validate(blueprint)
+            if isinstance(blueprint, AgentConfig):
+                blueprint = AgentBlueprint(
+                    config=blueprint,
+                    tool_pool=self._tool_pool,
+                    storage=self.storage,
+                    callbacks=self._llm_callbacks,
+                    warning_callback=self._warning_callback,
+                )
+                self.agent_blueprints[name] = blueprint
+
+            if agent_state is not None:
+                agent = blueprint.restore(agent_id=agent_id, state=agent_state)
+            else:
+                agent = blueprint.instantiate(llm=self._current_llm)
+                agent_id = agent.agent_id
+            self._current_llm = agent.llm_config
+            self._agents[name] = agent
+            # Add runtime state to session (even if previously we had one there)
+            self.session.agents[agent_id] = agent.state
+            self._store_session()
+        return self._agents[name]
+
+    def _process_command(self, prompt: str) -> PromptResult:
+        """Parse and execute a slash-command from a prompt.
+
+        Processes the prompt in a traditional shell-like manner: the first
+        item is treated as the command, and the remaining items are passed
+        as command arguments.
+
+        Parameters
+        ----------
+        prompt : str
+            The prompt string. The method assumes that the prompt starts
+            with the ``/`` character.
+
+        Returns
+        -------
+        PromptResult
+            The result of the command execution.
+        """
+        # currently no asynchron command exevution possible
+        parts = shlex.split(prompt[1:])
+        command = parts[0] if parts else ""
+        args = parts[1:]
+        result = self.command_executor.execute_command(command, args)
+        self._store_session()
+        return result
+
+    def _ps_replacer(self, var: str, extender: Callable[[str,str], str|None]|None=None) -> str:
         """Replace a single prompt-string placeholder variable.
 
         For supported variables, see :meth:`eval_prompt_string`
@@ -450,6 +551,11 @@ class Assistant:
             var, fmt = var.split(":", 1)
         var = var.strip()
         fmt = fmt.strip()
+
+        if extender is not None:
+            result = extender(var, fmt)
+            if result is not None:
+                return result
 
         # Session specific info
         if var == "session_id" and fmt == "":

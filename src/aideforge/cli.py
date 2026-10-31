@@ -1,16 +1,29 @@
+# CLI module
+# Note: CLI submodule is not thread safe, because it is built on readline,
+# which isn't. But I don't think it could be an issue, ever.
+import argparse
+import asyncio
+import json
+import re
 import readline
-from dataclasses import dataclass
-from typing import Any, Type
+import sys
+from functools import partial
+from typing import Any, Callable, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
+from pydantic import BaseModel, Field
 
-from .assistant import Assistant
-from .theme import Theme, DefaultTheme, to_term_colors
+from .agent import ActionRequest, ApprovalDecision
+from .assistant import Assistant, PSEvalExtender
+from .structs import AssistantSettings, Theme, ThemeColor, UiSettings
+from .structs.theme import to_term_colors
 
-__all__ = ["Cli", "HistoryConfig"]
+__all__ = ["Cli", "CliCallbackHandler"]
 
-#>class VerbosityConfig
+class _Shared(BaseModel):
+    colors: ThemeColor = Field(default_factory=ThemeColor)
+    ui_settings: UiSettings = Field(default_factory=UiSettings)
 
 
 class CliCallbackHandler(BaseCallbackHandler):
@@ -25,7 +38,7 @@ class CliCallbackHandler(BaseCallbackHandler):
         The theme providing color definitions for terminal output.
     """
 
-    def __init__(self, theme: Theme) -> None:
+    def __init__(self, shared: _Shared) -> None:
         """Initialize the callback handler with a theme.
 
         Parameters
@@ -34,8 +47,7 @@ class CliCallbackHandler(BaseCallbackHandler):
             The theme providing color definitions for terminal output.
         """
         super().__init__()
-        self._theme = theme
-        self._colors = to_term_colors(theme.colors)
+        self._shared = shared
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         """Handle the end-of-LLM-call event by printing colorized output.
@@ -51,8 +63,9 @@ class CliCallbackHandler(BaseCallbackHandler):
         **kwargs : Any
             Additional keyword arguments passed by the callback framework.
         """
-        color = self._colors.thinking
-        color_em = self._colors.thinking_em
+        color = self._shared.colors.thinking
+        color_em = self._shared.colors.thinking_em
+        assert len(response.generations) > 0, "on_llm_end: Response does not have generations"
         for gen in response.generations[0]:  # currently, no multiple prompts
             # there won't be multiple response variants, but who knows
             msg = gen.message
@@ -78,8 +91,8 @@ class CliCallbackHandler(BaseCallbackHandler):
         **kwargs : Any
             Additional keyword arguments passed by the callback framework.
         """
-        color = self._colors.thinking
-        color_em = self._colors.thinking_em
+        color = self._shared.colors.thinking
+        color_em = self._shared.colors.thinking_em
         _color_print(
             color_em,
             f"[{output.tool_call_id}] {type(output).__name__} -> {output.name}",
@@ -98,24 +111,6 @@ class CliCallbackHandler(BaseCallbackHandler):
         """
         print(exception)
         print(kwargs)
-
-
-@dataclass
-class HistoryConfig:
-    """Configuration for the readline command history.
-
-    Attributes
-    ----------
-    path : str or None, optional
-        File path to persist/read command history from. If ``None``,
-        history is not persisted to disk.
-    size : int or None, optional
-        Maximum number of history entries to keep. If ``None``, the
-        readline default is used.
-    """
-
-    path: str | None = None
-    size: int | None = 1000
 
 
 class Cli:
@@ -143,9 +138,8 @@ class Cli:
         self,
         *,
         assistant: Assistant,
-        theme: Theme = DefaultTheme(),
-        history_config: HistoryConfig = HistoryConfig(),
-        callback_handler: Type[BaseCallbackHandler] = CliCallbackHandler,
+        default_settings: UiSettings|dict[str,Any]|None=None,
+        callback_handler: type[BaseCallbackHandler] = CliCallbackHandler,
     ) -> None:
         """Initialize the CLI with an assistant and configuration.
 
@@ -163,12 +157,35 @@ class Cli:
             The callback handler class to use for observing LLM execution,
             by default :class:`CliCallbackHandler`.
         """
+        default_settings = default_settings or UiSettings()
+        self._shared=_Shared()
         self._assistant = assistant
-        self._assistant.set_callbacks(callback_handler(theme=theme))
-        self._theme = theme
-        self._history_config = history_config
+        self._storage = assistant.storage
+        self._assistant.set_callbacks(callback_handler(shared=self._shared))
+        self._assistant.ensure_settings(default_settings)
 
-    async def run(self) -> None:
+    def process_arguments(self, args: list[str] | None = None, *, custom_parser:Callable[[argparse.ArgumentParser], None]|None=None) -> None:
+        # Call this function if you would like to use default argument parsing
+        # this function is not called automatically
+        args = args or sys.argv
+        parser = argparse.ArgumentParser(
+            description=self._assistant.description
+        )
+
+        parser.add_argument('-s', '--session', help="Continue with the given session.")
+        parser.add_argument('-v', '--verbose', action='store_true')
+
+        if custom_parser is not None:
+            custom_parser(parser)
+
+        self._opts = parser.parse_args()
+        if self._opts.session:
+            self._assistant.change_session(self._opts.session)
+
+    def run(self) -> None:
+        raise NotImplementedError("Synchron CLI run has not been implemented, yet")
+
+    async def arun(self) -> None:
         """Run the interactive CLI loop.
 
         Reads user input from the terminal, displays the prompt string
@@ -178,32 +195,39 @@ class Cli:
         The loop terminates on ``EOFError``, ``KeyboardInterrupt``, or
         when the assistant returns an ``"exit"`` status.
         """
-        hist_cfg = self._history_config
-        theme = self._theme
+        assistant = self._assistant
+        session = assistant.session
+
+        ui_settings = assistant.get_settings("ui")
+        assert isinstance(ui_settings, UiSettings), f"Expected UiSettings, got {type(ui_settings).__name__}"
+        assistant_settings = assistant.get_settings("assistant")
+        assert isinstance(assistant_settings, AssistantSettings), f"Expected AssistantSettings, got {type(assistant_settings).__name__}"
+
+#>        theme = self._storage.retrieve_struct(Theme, ui_settings.theme)
+        theme = assistant.get_theme(ui_settings.theme)
         colors = to_term_colors(theme.colors)
-        nocolor = "\x1b[0m"
+        hist_size = assistant_settings.history.size
+        prompt_string = ui_settings.display.prompt_string
 
-        if hist_cfg.path is not None:
-            try:
-                readline.read_history_file(hist_cfg.path)
-            except (FileNotFoundError, OSError):
-                pass
-        if hist_cfg.size is not None:
-            readline.set_history_length(hist_cfg.size)
+        self._shared.ui_settings = ui_settings
+        self._shared.colors = colors
+
+        readline.clear_history()
+        history = assistant.session.history
+        if hist_size is not None:
+            readline.set_history_length(hist_size)
+        for item in history:
+            readline.add_history(item)
         readline.set_auto_history(True)
-
-        ps_s = colors.prompt_string
-        ps_e = ""
-        if colors.prompt_string:
-            ps_e = nocolor
-        ps_e += colors.input
 
         try:
             while True:
-                ps_c = self._assistant.eval_prompt_string(theme.prompt_string)
-                ps = ps_s + ps_c + ps_e
+                ps_text = assistant.eval_prompt_string(prompt_string)
+                _color_print(colors.prompt_string, ps_text, end="")
+                _set_color(colors.input)
                 try:
-                    query = input(ps).strip()
+                    query = await ainput("")
+                    query = query.strip()
                 except (EOFError, KeyboardInterrupt):
                     break
                 _reset_color(colors.input)
@@ -211,33 +235,130 @@ class Cli:
                 if not query:
                     continue
 
-                result = await self._assistant.process_prompt(query)
-                if result.status == "response":
+                processor = assistant.aprompt_processor(query)
+                response = await anext(processor)
+                while isinstance(response, ActionRequest):
+                    decision = await self._aaction_input(response)
+                    response = await processor.asend(decision)
+                await processor.aclose()
+
+                if response.status == "response":
                     _color_print(
-                        colors.response, result.content, smart_end="\n"
+                        colors.response, response.content, smart_end="\n"
                     )
-                elif result.status == "ok":
+                elif response.status == "ok":
                     pass
-                elif result.status == "output":
-                    _color_print(colors.output, result.content, smart_end="\n")
-                elif result.status == "error":
-                    _color_print(colors.output_error, result.error_message)
-                elif result.status == "exit":
+                elif response.status == "output":
+                    _color_print(colors.output, response.content, smart_end="\n")
+                elif response.status == "error":
+                    _color_print(colors.output_error, response.error_message)
+                elif response.status == "exit":
                     break
                 else:
                     raise RuntimeError(
-                        f"Command status '{result.status}' is unknown"
+                        f"Command status '{response.status}' is unknown"
                     )
         finally:
-            if hist_cfg.path is not None:
-                try:
-                    readline.write_history_file(hist_cfg.path)
-                except OSError:
-                    pass
+            assistant.shutdown()
+            print(f"\nSession {assistant.session.session_id} has ended.")
+
+    def _action_input(self, request: ActionRequest) -> ApprovalDecision:
+        colors = self._shared.colors
+        display = self._shared.ui_settings.display
+        extender: PSEvalExtender = partial(_ps_extender, request)
+        ps_text = self._assistant.eval_prompt_string(display.tool_prompt_string, extender)
+        ps_err = None
+        _color_print(colors.tool_prompt_string, ps_text, end="")
+        while True:
+            _set_color(colors.tool_input)
+            answer = input("")
+            _reset_color(colors.tool_input)
+            histlen = readline.get_current_history_length()
+            if histlen > 0:
+                readline.remove_history_item(histlen - 1)
+            decision = _eval_answer(answer)
+            if decision is not None:
+                return decision
+            if ps_err is None:
+                ps_err = self._assistant.eval_prompt_string(display.tool_prompt_error_string, extender)
+            _color_print(colors.tool_prompt_string, ps_err, end="")
+
+    async def _aaction_input(self, request: ActionRequest) -> ApprovalDecision:
+        colors = self._shared.colors
+        display = self._shared.ui_settings.display
+        extender:PSEvalExtender = partial(_ps_extender, request)
+        ps_text = self._assistant.eval_prompt_string(display.tool_prompt_string, extender)
+        ps_err = None
+        _color_print(colors.tool_prompt_string, ps_text, end="")
+        while True:
+            _set_color(colors.tool_input)
+            answer = await ainput("")
+            _reset_color(colors.tool_input)
+            histlen = readline.get_current_history_length()
+            if histlen > 0:
+                readline.remove_history_item(histlen - 1)
+            decision = _eval_answer(answer)
+            if decision is not None:
+                return decision
+            if ps_err is None:
+                ps_err = self._assistant.eval_prompt_string(display.tool_prompt_error_string, extender)
+            _color_print(colors.tool_prompt_string, ps_err, end="")
+
+def _ps_extender(request: ActionRequest, var: str, fmt: str = "") -> str|None:
+    # if var or fmt is not valid, None must be returned without raising an error
+    # see details at ``PSEvalExtender``
+    # {tool}
+    # {arga:min} = {args}
+    # {args:pretty}
+    # {args:pretty,4} does not indenr first row. User can indent it with whatever they want
+    # {args:json}
+    # {args:json,2}
+    if var == "tool":
+        if fmt == "":
+            return request.name
+    if var == "args":
+        if fmt in ("min", ""):
+            return str(request.args)
+        fmts = fmt.split(",")
+        if len(fmts) == 1:
+            indent = 0
+        elif len(fmts) == 2 and fmts[1].isdigit():
+            indent = int(fmts[1])
+        else:
+            return None
+        if fmts[0] == "pretty":
+            sep = "\n" + " " * indent
+            argstxt = sep.join(f"{k} = {v!r}" for k, v in request.args.items())
+            return argstxt
+        if fmts[0] == "json":
+            # TODO: ending "}" is on col 0
+            argstxt = json.dumps(request.args, indent=indent)
+            return argstxt
+    return None
+
+def _eval_answer(answer: str) -> ApprovalDecision | None:
+    answer = answer.strip().lower()
+    if answer in ("y", "yes", "approve"):
+        return ApprovalDecision.APPROVE
+    if answer in ("n", "no", "reject"):
+        return ApprovalDecision.REJECT
+    if answer in ("a", "always"):
+        return ApprovalDecision.ALWAYS
+    answer = re.sub(r'[\W\d_]+', '', answer)
+    if answer in ("aat", "alwaysall", "alwaysalltools"):
+        return ApprovalDecision.ALWAYS_ALL_TOOLS
+    if answer in ("yfr", "yesforrun", "approveforrun"):
+        return ApprovalDecision.APPROVE_FOR_RUN
+    if answer in ("yatfr", "yesallforrun", "yestoalltoolsforrun"):
+        return ApprovalDecision.APPROVE_ALL_TOOLS_FOR_RUN
+    return None
+
+
+
 
 
 def _color_print(
-    color: str,
+    color: str|None,
     *args: Any,
     smart_end: str | None = None,
     max_lines: int | None = None,
@@ -248,7 +369,7 @@ def _color_print(
 
     Parameters
     ----------
-    color : str
+    color : str or None
         The ANSI escape sequence for the desired color. Pass an empty string
         for no color.
     *args : Any
@@ -271,6 +392,7 @@ def _color_print(
     The color escape sequence is printed before the content and reset
     after, unless *color* is an empty string.
     """
+    color = color or ""
     if smart_end:
         if not isinstance(args[-1], str) or not args[-1].endswith(smart_end):
             kwargs["end"] = smart_end
@@ -282,26 +404,30 @@ def _color_print(
         print("\x1b[0m", end="")
 
 
-def _set_color(color: str) -> None:
+def _set_color(color: str|None) -> None:
     """Print a color escape sequence without a newline.
 
     Parameters
     ----------
-    color : str
+    color : str or None
         The ANSI escape sequence to print. If empty, nothing is printed.
     """
     if color:
         print(color, end="")
 
 
-def _reset_color(color: str) -> None:
+def _reset_color(color: str|None) -> None:
     """Reset the terminal color if a color was previously set.
 
     Parameters
     ----------
-    color : str
+    color : str or None
         The color escape sequence that was previously set. If non-empty,
         the ANSI reset sequence is printed.
     """
     if color:  # not None or ""
         print("\x1b[0m", end="")
+
+
+async def ainput(prompt: str) -> str:
+    return await asyncio.to_thread(input, prompt)

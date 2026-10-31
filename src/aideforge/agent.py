@@ -395,7 +395,7 @@ class AgentRuntime:
         >>> processor = agent.aprompt_processor("List me the python files")
         >>> response = await anext(processor)
         >>> while isinstance(response, ActionRequest):
-        ...   action = async_input(response.description + "\napprove/reject? ")
+        ...   action = await async_input(response.description + "\napprove/reject? ")
         ...   response = await processor.asend(ApprovalDecision(action))
         >>> processor.aclose()
         >>> # process response message or error
