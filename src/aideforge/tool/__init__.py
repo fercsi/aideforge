@@ -61,7 +61,7 @@ class AideForgeStructuredTool(_DescriptionMixin, StructuredTool):
         self.update_description()
 
 
-class AsyncTool(BaseAideForgeTool):
+class BaseAsyncTool(BaseAideForgeTool):
     """Base class for creating asynchronous LangChain tools.
 
     Subclasses should implement the :meth:`_arun` method. The :meth:`_run`

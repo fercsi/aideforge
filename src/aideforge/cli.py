@@ -220,6 +220,10 @@ class Cli:
             readline.add_history(item)
         readline.set_auto_history(True)
 
+        welcome = assistant.get_welcome_message()
+        if welcome:
+            _color_print(colors.welcome_message, welcome)
+
         try:
             while True:
                 ps_text = assistant.eval_prompt_string(prompt_string)

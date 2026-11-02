@@ -414,6 +414,9 @@ class Assistant:
         self._themes[theme_name] = theme
         return theme
 
+    def get_welcome_message(self) -> str:
+        return self._get_current_agent().config.welcome_message
+
     # PRIVATE METHODS
 
     def _store_session(self) -> None:

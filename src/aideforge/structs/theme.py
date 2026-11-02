@@ -60,6 +60,7 @@ class ThemeColor(BaseModel):
     input: ColorType = None
     tool_input: ColorType = None
     # Assistant
+    welcome_message: ColorType = None
     thinking: ColorType = None
     thinking_em: ColorType = None
     response: ColorType = None
@@ -106,6 +107,7 @@ theme_collection: dict[str, Theme] = {
     "default": Theme(
         name="default",
         colors={
+            "welcome_message": 11,
             "tool_prompt_string": 14,
             "thinking": 8,
             "thinking_em": 7,
