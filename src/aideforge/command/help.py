@@ -10,7 +10,7 @@ from . import (
     Success,
 )
 
-__all__ = ["AgentCommand"]
+__all__ = ["HelpCommand"]
 
 # TODO: make help text "editable"
 _HELP_TEXT = """
@@ -42,6 +42,7 @@ class HelpCommand(BaseCommand):
     """
 
     name: str = "help"
+    aliases: list[str] = ["h"]
     description: str = (
         "Prints general help information or information about commands"
     )
@@ -69,7 +70,7 @@ class HelpCommand(BaseCommand):
             "subcommand_name",
             nargs="?",
             metavar="SUBCOMMAND_NAME",
-            help="Subommand's name",
+            help="Subcommand's name",
         )
 
     def execute(self, args: Namespace) -> CommandResult:
@@ -90,17 +91,17 @@ class HelpCommand(BaseCommand):
         """
         command = args.command_name
         subcommand = args.subcommand_name
-        commands = self._assistant.command_executor.commands
+        commands = self._assistant.get_commands()
         if command:
             if command not in commands:
                 return InvalidArgument(
-                    error_message=f"Unknown command '{command}'"
+                    error_message=f"Unknown command '{command}'."
                 )
             if subcommand:
                 parser = commands[command].subparsers.get(subcommand, None)
                 if parser is None:
                     return InvalidArgument(
-                        error_message=f"Command '{command}' does not have '{subcommand}' subcommand"
+                        error_message=f"Command '{command}' does not have '{subcommand}' subcommand."
                     )
                 text = parser.format_help()
             else:
@@ -111,9 +112,13 @@ class HelpCommand(BaseCommand):
                         text += f"- {name}: {subparser.description}\n"
                     text += f'\nUse "/help {command} SUBCOMMAND" to get more details.'
             return CommandOutput(content=text)
-        command_info = "\n".join(
-            sorted(f"- /{c.name}: {c.description}" for c in commands.values())
-        )
+        cmdtexts = []
+        for cmd in commands.values():
+            aliases = ""
+            if cmd.aliases:
+                aliases = " (" + ", ".join(f"/{a}" for a in cmd.aliases) + ")"
+            cmdtexts.append(f"- /{cmd.name}{aliases}: {cmd.description}")
+        command_info = "\n".join(sorted(cmdtexts))
         return CommandOutput(
             content=_HELP_TEXT.strip().format(commands=command_info)
         )

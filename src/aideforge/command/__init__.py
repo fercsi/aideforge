@@ -3,15 +3,15 @@ from __future__ import annotations
 import argparse
 import importlib
 import inspect
-import re
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self, TYPE_CHECKING
+from typing import Annotated, Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from aideforge.status import (
     UnknownCommand,
+    InternalError,
     InvalidArgument,
     CommandExecutionError,
     Success,
@@ -49,7 +49,7 @@ class CommandOutput(BaseModel):
 
     Attributes
     ----------
-    status : Literal["ouput"]
+    status : Literal["output"]
         The status of the result.
     content : str
         The output text produced by the command.
@@ -59,15 +59,45 @@ class CommandOutput(BaseModel):
     content: str
 
 
-CommandError = Annotated[
-    UnknownCommand | InvalidArgument | CommandExecutionError,
-    Field(discriminator="error_code"),
-]
-
+#: CommandSuccess
+#: --------------
+#:
+#: Represents the possible successful outcomes of a command.
+#:
+#: This type alias can be one of:
+#:
+#: - ``Success``
+#: - ``CommandOutput``
+#: - ``ExitAssistant``
 CommandSuccess = Annotated[
     Success | CommandOutput | ExitAssistant, Field(discriminator="status")
 ]
 
+#: CommandError
+#: ------------
+#:
+#: Represents the possible failed outcomes of a command.
+#:
+#: This type alias can be one of:
+#:
+#:   - ``UnknownCommand``
+#:   - ``InvalidArgument``
+#:   - ``CommandExecutionError``
+#:   - ``InternalError``
+CommandError = Annotated[
+    UnknownCommand | InvalidArgument | CommandExecutionError | InternalError,
+    Field(discriminator="error_code"),
+]
+
+#: CommandResult
+#: -------------
+#:
+#: Represents the possible outcomes of a command.
+#:
+#: This type alias can be one of:
+#:
+#: - ``CommandSuccess``
+#: - ``CommandError``
 CommandResult = Annotated[
     CommandSuccess | CommandError, Field(discriminator="status")
 ]
@@ -104,8 +134,9 @@ class CommandArgumentParser(argparse.ArgumentParser):
 
     Overrides :meth:`error` to raise a :class:`CommandArgumentError`
     instead of calling ``sys.exit``. Also supresses argparse default
-    ``--help`` option and sets common defaults for
-    subparser configuration (see :meth:`add_subparser`).
+    ``--help`` option (``/help`` command is used in assistant interface
+    instead) and sets common defaults for subparser configuration
+    (see :meth:`add_subparser`).
 
     Parameters
     ----------
@@ -189,8 +220,15 @@ class BaseCommand:
     ----------
     name : str
         The command name, used as the slash-command identifier.
+    aliases : list[str] | None, optional
+        Aliases that can be used instead of ``name``. Note that, unlike
+        ``name``, aliases are weak, meaning that they can overwrite each
+        other or be overwritten by any command.
     description : str
         A short description shown in help output.
+    category : str, optional
+        A category used to group commands in ``/help`` when the number of
+        commands exceeds seven. Defaults to ``"misc"``.
     parser : CommandArgumentParser
         The argument parser for this command.
     subparsers : dict[str, CommandArgumentParser]
@@ -201,19 +239,19 @@ class BaseCommand:
     >>> class TestCommand(BaseCommand):
     ...     name = "test"
     ...     description = "This is just a test command"
-    ... 
-    ...     def setup( self, parser, subparsers, **kwargs:
+    ...
+    ...     def setup(self, parser, subparsers, **kwargs):
     ...         parser.add_argument(
     ...             "-v", "--verbose", action='store_true'
     ...         )
     ...         parser_group = parser.add_subparsers(required=False)
-    ... 
+    ...
     ...         subparser = parser_group.add_parser(
     ...             "subcmd1", description="Subcommand #1"
     ...         )
     ...         subparser.set_defaults(func=self.subcmd1)
     ...         subparsers["subcmd1"] = subparser
-    ... 
+    ...
     ...         subparser = parser_group.add_parser(
     ...             "subcmd2", description="Subcommand #2"
     ...         )
@@ -222,21 +260,35 @@ class BaseCommand:
     ...         )
     ...         subparser.set_defaults(func=self.subcmd2)
     ...         subparsers["subcmd2"] = subparser
-    ... 
-    ...    def subcmd1(self, args):
-    ...        ...
-    ...    def subcmd2(self, args):
-    ...        # you can use args.name here
-    ...        ...
-    ...    def execute(self, args):
-    ...        # this runs only if no subcommends, or subparser is not required
-    ...        # --version can be used in each command
-    CLI> /test -v subcmd2 "my name"
     ...
+    ...     def subcmd1(self, args):
+    ...         ...
+    ...     def subcmd2(self, args):
+    ...         # you can use args.name here
+    ...         ...
+    ...     def execute(self, args):
+    ...         # This is executed when the command has no subcommands, or
+    ...         # when it does have subcommands but the caller invokes it
+    ...         # without specifying one (and this option is enabled in
+    ...         # ``parser_group``).
+    ...         #
+    ...         # --version can be used in each command
+    ...         ...
+    
+    Running assistant with the new (``test``) command:
+
+    .. code-block:: console
+
+        $ ./assistant
+        ...
+        CLI> /test -v subcmd2 "my name"
+        ...
     """
 
     name: str
+    aliases: list[str] | None = None
     description: str
+    category: str = "misc"
 
     def __init__(self, assistant: Assistant) -> None:
         """Initialize the command with an argument parser.
@@ -354,7 +406,11 @@ class CommandExecutor:
         assistant : Assistant
             The assistant instance passed to each registered command.
         """
-        self.commands: dict[str, BaseCommand] = {}
+        from aideforge.assistant import Assistant
+        self._commands: dict[str, BaseCommand] = {}
+        self._aliases: dict[str, BaseCommand] = {}
+        if not isinstance(assistant, Assistant):
+            raise ValueError(f"Expected an Assistant, got {type(assistant).__name__} instead.")
         self._assistant = assistant
 
     def register_command(self, command: type[BaseCommand]) -> None:
@@ -369,20 +425,24 @@ class CommandExecutor:
         Raises
         ------
         ValueError
-            If the commanf does not define a valid ``name`` attribute,
+            If the command does not define a valid ``name`` attribute,
             or if a command with that name is already registered.
         """
         if not hasattr(command, "name") or not command.name:
-            raise ValueError(
-                "Command must define a valid 'name' attribute."
-            )
+            raise ValueError("Command must define a valid 'name' attribute.")
 
-        if command.name in self.commands:
-            raise ValueError(
-                f"Command '{command.name}' is already registered."
-            )
+        if command.name in self._commands:
+            raise ValueError(f"Command '{command.name}' is already registered.")
 
-        self.commands[command.name] = command(self._assistant)
+        instance = command(self._assistant)
+        self._commands[command.name] = instance
+        if command.aliases is not None:
+            aliases = command.aliases
+            if not isinstance(aliases, list):
+                raise ValueError(f"Expected list of aliases, got {type(aliases).__name__} instead.")
+            for alias in aliases:
+                self._aliases[alias] = instance
+
 
     def execute_command(self, name: str, arg_list: list[str]) -> CommandResult:
         """Find the registered command and execute it with the command line
@@ -394,7 +454,7 @@ class CommandExecutor:
         Parameters
         ----------
         name : str
-            The name of the command to execute.
+            The name (or an alias) of the command to execute.
         arg_list : list[str]
             A list of argument strings to parse and pass to the command.
 
@@ -407,18 +467,24 @@ class CommandExecutor:
             fails. Returns a :class:`CommandExecutionError` if the command
             raises an exception during execution.
         """
-        if name not in self.commands:
+        command = self._commands.get(name, self._aliases.get(name))
+        if command is None:
             return UnknownCommand(error_message=f"Command '{name}' not found.")
 
-        command = self.commands[name]
         args, err = command.parse_args(arg_list)
         if err:
             return InvalidArgument(error_message=str(err))
         try:
+            assert hasattr(args, "func"), f"Command '{name}' does not have an execution path."
             return args.func(args)
+        except AssertionError as exc:
+            return InternalError.from_exception(exc)
         except Exception as exc:
             return CommandExecutionError(error_message=str(exc))
 
+    @property
+    def commands(self) -> dict[str, BaseCommand]:
+        return self._commands
 
 def _import_commands() -> list[type[BaseCommand]]:
     """Dynamically import and discover :class:`BaseCommand` subclasses.

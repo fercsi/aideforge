@@ -20,7 +20,8 @@ class ExitCommand(BaseCommand):
     """
 
     name: str = "exit"
-    description: str = "Exit assistant"
+    aliases: list[str] = ["x"]
+    description: str = "Exit the assistant"
 
     def execute(self, args: Namespace) -> CommandResult:
         """Signal the assistant to exit.

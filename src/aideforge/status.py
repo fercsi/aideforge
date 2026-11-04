@@ -161,7 +161,7 @@ class InternalError(BaseError):
 
         type_name = exc.__class__.__name__
         return cls(
-            error_message=f"Internal error ({type_name}): {exc}",
+            error_message=f"Internal error ({type_name}): {exc}.",
             type=type_name,
             message=str(exc),
             args=[

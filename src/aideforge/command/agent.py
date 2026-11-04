@@ -20,7 +20,7 @@ class AgentCommand(BaseCommand):
     Provided sub-commands:
 
     - **list**: Lists all available agents
-    - **use**: Selects which aget to use from now
+    - **use**: Selects which agent to use from now
     - **swap**: Swaps current agent with the last one
 
     Attributes
@@ -62,7 +62,7 @@ class AgentCommand(BaseCommand):
         subparsers["list"] = subparser
 
         subparser = parser_group.add_parser(
-            "use", description="Selects which aget to use from now"
+            "use", description="Selects which agent to use from now"
         )
         subparser.add_argument(
             "agent_name", metavar="AGENT_NAME", help="Agent's name to use"
@@ -92,7 +92,7 @@ class AgentCommand(BaseCommand):
             A :class:`CommandOutput` containing a newline-separated list
             of agent names, with the current agent marked by a check mark.
         """
-        agent_names = sorted(self._assistant.agent_blueprints)
+        agent_names = sorted(self._assistant.agent_blueprints.keys())
         c = self._assistant.current_agent_name
         agent_names = [f"✓ {a}" if a == c else f"  {a}" for a in agent_names]
         return CommandOutput(content="\n".join(agent_names) + "\n")
@@ -114,7 +114,7 @@ class AgentCommand(BaseCommand):
         """
         name = args.agent_name
         if name not in self._assistant.agent_blueprints:
-            return InvalidArgument(f"Unknown agent '{name}'")
+            return InvalidArgument(error_message=f"Unknown agent '{name}'.")
         self._last_agent_name = self._assistant.current_agent_name
         self._assistant.current_agent_name = name
         return Success()
@@ -133,7 +133,7 @@ class AgentCommand(BaseCommand):
             A :class:`Success` result. If no previous agent exists, the
             current agent remains unchanged.
         """
-        # TODO: if only two agents, just swap
+        # TODO: if only two agents, just swap even if no last one
         if self._last_agent_name is None:
             return Success()
         tmp = self._last_agent_name
