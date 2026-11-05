@@ -130,6 +130,7 @@ class FileSystemStorage(BaseStorage):
             When ``True``, return instead of raising if the
             resource cannot be stored.
         """
+        pass
 
     def retrieve_struct(
         self,
@@ -287,7 +288,7 @@ class FileSystemStorage(BaseStorage):
             try:
                 with open(file, "r", encoding="utf-8") as f:
                     if ext in (".yaml", ".yml"):
-                        data = yaml.safe_load_all(f)
+                        data = list(yaml.safe_load_all(f))
                         data = data[0] if len(data) == 1 else data
                     elif ext == ".json":
                         data = json.load(f)

@@ -61,5 +61,6 @@ class SessionState(BaseStruct):
         description="Environment dependent extra information like CWD.",
     )
 
-    storage_path: ClassVar[str] = "%/sessions/{struct.session_id}"
+    storage_name: ClassVar[str] = "%/sessions/{struct.session_id}"
     scope: ClassVar[Literal["user"]] = "user"
+    kinds: ClassVar["sessions"] = "sessions"

@@ -51,7 +51,7 @@ from langgraph.runtime import Runtime as LangGraphRuntime
 from langgraph.types import Command as LangGraphCommand
 
 from aideforge.abc import AbstractAgentRuntime
-from aideforge.results import LlmError, LlmResponse
+from aideforge.results import LlmError, LlmResponse, InternalError
 from aideforge.storage import BaseStorage
 from aideforge.structs import (
     AgentConfig,
@@ -185,6 +185,7 @@ class AgentRuntime(AbstractAgentRuntime):
             }
             if self._callbacks:
                 config["callbacks"] = self._callbacks
+            print(self._callbacks)
             state = await self._agent.aget_state(config)
             prev_msg_cnt = (
                 len(state.values["messages"])
@@ -282,7 +283,8 @@ class AgentRuntime(AbstractAgentRuntime):
                 err_msg = exc.body["error"].get("message", str(exc))
             else:
                 err_msg = str(exc)
-            yield LlmError(error_message=err_msg)
+#>            yield LlmError(error_message=err_msg)
+            yield InternalError.from_exception(exc)
 
     def change_llm(self, llm_config: LlmConfig) -> None:
         if hasattr(self, "llm_config"):

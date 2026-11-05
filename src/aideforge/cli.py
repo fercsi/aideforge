@@ -164,8 +164,8 @@ class Cli:
         self._assistant = assistant
         self._storage = assistant.storage
         # TODO warning callback
-#>        callbacks = LangChainCallbacks(llm = callback_handler(shared=self._shared))
-#>        self._assistant.update_callbacks(callbacks)
+        callbacks = LangChainCallbacks(llm = [callback_handler(shared=self._shared)])
+        self._assistant.update_callbacks(callbacks)
         self._assistant.ensure_settings(default_settings)
 
     def process_arguments(self, args: list[str] | None = None, *, custom_parser:Callable[[argparse.ArgumentParser], None]|None=None) -> None:
@@ -259,7 +259,7 @@ class Cli:
                 elif response.status == "output":
                     _color_print(colors.output, response.content, smart_end="\n")
                 elif response.status == "error":
-                    _color_print(colors.output_error, response.traceback)
+                    _color_print(colors.output_error, "\n".join(response.traceback))
                     _color_print(colors.output_error, response.error_message)
                 elif response.status == "exit":
                     break
