@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from aideforge.status import (
+from aideforge.results import (
     UnknownCommand,
     InternalError,
     InvalidArgument,
@@ -22,84 +22,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BaseCommand",
-    "CommandError",
     "CommandExecutor",
-    "CommandOutput",
-    "CommandResult",
-    "CommandSuccess",
-    "ExitAssistant",
+    "CommandArgumentParser",
     "default_commands",
-]
-
-
-class ExitAssistant(BaseModel):
-    """Result model indicating the assistant should exit.
-
-    Attributes
-    ----------
-    status : Literal["exit"]
-        The status of the result, always ``"exit"``.
-    """
-
-    status: Literal["exit"] = "exit"
-
-
-class CommandOutput(BaseModel):
-    """Result model for command output (non-LLM-response text).
-
-    Attributes
-    ----------
-    status : Literal["output"]
-        The status of the result.
-    content : str
-        The output text produced by the command.
-    """
-
-    status: Literal["output"] = "output"
-    content: str
-
-
-#: CommandSuccess
-#: --------------
-#:
-#: Represents the possible successful outcomes of a command.
-#:
-#: This type alias can be one of:
-#:
-#: - ``Success``
-#: - ``CommandOutput``
-#: - ``ExitAssistant``
-CommandSuccess = Annotated[
-    Success | CommandOutput | ExitAssistant, Field(discriminator="status")
-]
-
-#: CommandError
-#: ------------
-#:
-#: Represents the possible failed outcomes of a command.
-#:
-#: This type alias can be one of:
-#:
-#:   - ``UnknownCommand``
-#:   - ``InvalidArgument``
-#:   - ``CommandExecutionError``
-#:   - ``InternalError``
-CommandError = Annotated[
-    UnknownCommand | InvalidArgument | CommandExecutionError | InternalError,
-    Field(discriminator="error_code"),
-]
-
-#: CommandResult
-#: -------------
-#:
-#: Represents the possible outcomes of a command.
-#:
-#: This type alias can be one of:
-#:
-#: - ``CommandSuccess``
-#: - ``CommandError``
-CommandResult = Annotated[
-    CommandSuccess | CommandError, Field(discriminator="status")
 ]
 
 

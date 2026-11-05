@@ -14,7 +14,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 from pydantic import BaseModel, Field
 
-from .agent import ActionRequest, ApprovalDecision
+from .agent import ActionRequest, ApprovalDecision, Callbacks, LangChainCallbacks
 from .assistant import Assistant, PSEvalExtender
 from .structs import AssistantSettings, Theme, ThemeColor, UiSettings
 from .structs.theme import to_term_colors
@@ -69,12 +69,12 @@ class CliCallbackHandler(BaseCallbackHandler):
         for gen in response.generations[0]:  # currently, no multiple prompts
             # there won't be multiple response variants, but who knows
             msg = gen.message
-            _color_print(color_em, f"[{msg.id}] {type(msg).__name__}")
-            akwa = getattr(msg, "additional_kwargs", {})
-            if "reasoning_content" in akwa:
-                _color_print(color, f"  Reasoning: {akwa['reasoning_content']}")
+#>            _color_print(color_em, f"[{msg.id}] {type(msg).__name__}")
+#>            akwa = getattr(msg, "additional_kwargs", {})
+#>            if "reasoning_content" in akwa:
+#>                _color_print(color, f"  Reasoning: {akwa['reasoning_content']}")
             if msg.tool_calls:
-                _color_print(color, f"  Tool calls:")
+                _color_print(color, "  Tool calls:")
             for tc in msg.tool_calls:
                 args = ", ".join(f"{k}={v!r}" for k, v in tc["args"].items())
                 _color_print(color, f"    [{tc['id']}] {tc['name']}({args})")
@@ -91,6 +91,7 @@ class CliCallbackHandler(BaseCallbackHandler):
         **kwargs : Any
             Additional keyword arguments passed by the callback framework.
         """
+        return
         color = self._shared.colors.thinking
         color_em = self._shared.colors.thinking_em
         _color_print(
@@ -109,6 +110,7 @@ class CliCallbackHandler(BaseCallbackHandler):
         **kwargs : Any
             Additional keyword arguments passed by the callback framework.
         """
+        return
         print(exception)
         print(kwargs)
 
@@ -161,7 +163,9 @@ class Cli:
         self._shared=_Shared()
         self._assistant = assistant
         self._storage = assistant.storage
-        self._assistant.set_callbacks(callback_handler(shared=self._shared))
+        # TODO warning callback
+#>        callbacks = LangChainCallbacks(llm = callback_handler(shared=self._shared))
+#>        self._assistant.update_callbacks(callbacks)
         self._assistant.ensure_settings(default_settings)
 
     def process_arguments(self, args: list[str] | None = None, *, custom_parser:Callable[[argparse.ArgumentParser], None]|None=None) -> None:
@@ -255,6 +259,7 @@ class Cli:
                 elif response.status == "output":
                     _color_print(colors.output, response.content, smart_end="\n")
                 elif response.status == "error":
+                    _color_print(colors.output_error, response.traceback)
                     _color_print(colors.output_error, response.error_message)
                 elif response.status == "exit":
                     break

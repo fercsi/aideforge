@@ -3,7 +3,14 @@ import re
 import shlex
 from copy import deepcopy
 from datetime import datetime
-from typing import Annotated, Any, AsyncGenerator, Callable, Generator, TypeAlias
+from typing import (
+    Annotated,
+    Any,
+    AsyncGenerator,
+    Callable,
+    Generator,
+    TypeAlias,
+)
 
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import Field
@@ -13,21 +20,26 @@ from .agent import (
     AgentBlueprint,
     AgentRuntime,
     ApprovalDecision,
-    LlmError,
-    LlmResponse,
+    Callbacks,
 )
-from .command import (
+from .commands import (
     BaseCommand,
     CommandExecutor,
-    CommandSuccess,
-    CommandError,
     default_commands,
 )
+from .results import CommandError, CommandSuccess, LlmError, LlmResponse
 from .storage import BaseStorage, MemoryStorage
-from .structs import AgentConfig, AssistantSettings, BaseSettings, LlmConfig, SessionState, Theme
+from .structs import (
+    AgentConfig,
+    AssistantSettings,
+    BaseSettings,
+    LlmConfig,
+    SessionState,
+    Theme,
+)
 from .structs.settings import get_settings_type, validate_settings
 from .structs.theme import theme_collection
-from .tool import ToolType
+from .tools import ToolType
 
 __all__ = ["Assistant", "PromptError", "PromptResult", "PSEvalExtender"]
 
@@ -72,7 +84,15 @@ PromptResult = Annotated[
 #:     The string value to substitute for the variable placeholder.
 #:     Returns ``None`` if the variable or formatting option is unsupported,
 #:     instead of raising an exception.
-PSEvalExtender:TypeAlias = Callable[[str, str], str | None]
+PSEvalExtender: TypeAlias = Callable[[str, str], str | None]
+
+AssistantSettingsInputType = (
+    BaseSettings | dict[str, Any] | list[BaseSettings | dict[str, Any]]
+)
+AssistantAgentsInputType = list[
+    AgentBlueprint | AgentConfig | dict[str, Any] | str
+]
+
 
 class Assistant:
     """AI agent and chat manager.
@@ -89,17 +109,13 @@ class Assistant:
         self,
         *,
         storage: BaseStorage | None = None,
-        default_settings: BaseSettings | dict[str, Any] | list[BaseSettings | dict[str, Any]] | None = None,
+        default_settings: AssistantSettingsInputType | None = None,
         session: SessionState | dict[str, Any] | str | None = None,
-        agents: list[AgentBlueprint | AgentConfig | dict[str, Any] | str]
-        | None = None,
+        agents: AssistantAgentsInputType | None = None,
         tool_pool: list[ToolType] | None = None,
         llm: LlmConfig | dict[str, Any] | None = None,
-        llm_callbacks: BaseCallbackHandler
-        | list[BaseCallbackHandler]
-        | None = None,
+        callbacks: Callbacks | None = None,
         commands: list[type[BaseCommand]] | None = None,
-        warning_callback: Callable[str, None] | None = None,
         description: str = DEFAULT_DESCRIPTION,
     ):
         storage = storage or MemoryStorage()
@@ -117,7 +133,9 @@ class Assistant:
                     settings["scope"] = "assistant"
                 settings = validate_settings(settings)
             if settings.scope in self._settings:
-                raise ValueError(f"Multiple settings has been given with the same scope: '{settings.scope}'")
+                raise ValueError(
+                    f"Multiple settings has been given with the same scope: '{settings.scope}'"
+                )
             self._settings[settings.scope] = settings
         if "assistant" not in self._settings:
             self._settings["assistant"] = AssistantSettings()
@@ -173,15 +191,14 @@ class Assistant:
         elif isinstance(llm, LlmConfig):
             llm = llm.model_copy(deep=True)
         self._current_llm = llm
-        self._llm_callbacks = []
-        if llm_callbacks:
-            self.set_callbacks(llm_callbacks)
+        self._callbacks = callbacks
+        if callbacks:
+            self.update_callbacks(callbacks)
+        self._warning_callback = callbacks and callbacks.warning
 
         self.command_executor = CommandExecutor(self)
         commands = (commands if commands is not None else []) + default_commands
         self.register_commands(commands)
-
-        self._warning_callback = warning_callback
 
         self.description = description
         self._themes = theme_collection.copy()
@@ -232,9 +249,7 @@ class Assistant:
         # self.current_agent_name = default_agent or agent_blueprints[0].name
         # self._current_agent = None
 
-    def set_callbacks(
-        self, callbacks: BaseCallbackHandler | list[BaseCallbackHandler]
-    ) -> None:
+    def update_callbacks(self, callbacks: Callbacks) -> None:
         """Register or extend callback handlers for LLM/tool execution.
 
         Callbacks are stored in the prompt configuration and applied to
@@ -246,11 +261,9 @@ class Assistant:
         callbacks : BaseCallbackHandler or list[BaseCallbackHandler]
             One or more callback handlers to register.
         """
-        if isinstance(callbacks, list):
-            callbacks = callbacks.copy()
-        else:
-            callbacks = [callbacks]
-        self._llm_callbacks.extend(callbacks)
+        # TODO merge with old?! Wit a parameter merge=False
+        self._callbacks = callbacks
+        self._warning_callback = callbacks and callbacks.warning
         for agent in self._agents.values():
             agent.update_callbacks(callbacks)
         for blueprint in self.agent_blueprints.values():
@@ -345,7 +358,9 @@ class Assistant:
         for command in commands:
             self.command_executor.register_command(command)
 
-    def eval_prompt_string(self, template: str, extender: PSEvalExtender|None=None) -> str:
+    def eval_prompt_string(
+        self, template: str, extender: PSEvalExtender | None = None
+    ) -> str:
         """Evaluate a prompt string template with runtime values.
 
         Single-brace placeholders ``{var}`` are replaced with their
@@ -386,13 +401,13 @@ class Assistant:
     def get_settings(self, scope: str) -> BaseSettings | None:
         return self._settings.get(scope)
 
-    def set_settings(self, settings: BaseSettings| dict[str, Any]) ->None:
+    def set_settings(self, settings: BaseSettings | dict[str, Any]) -> None:
         # overwrite settings
         if isinstance(settings, dict):
             settings = validate_settings(settings)
         self._settings[settings.scope] = settings
 
-    def ensure_settings(self, settings: BaseSettings| dict[str, Any]) ->None:
+    def ensure_settings(self, settings: BaseSettings | dict[str, Any]) -> None:
         # set settings if not given
         if isinstance(settings, dict):
             settings = validate_settings(settings)
@@ -407,7 +422,9 @@ class Assistant:
     def get_theme(self, theme_name: str) -> Theme:
         if theme_name in self._themes:
             return self._themes[theme_name]
-        theme = self._storage.retrieve_struct(Theme, theme_name, ignore_errors=True)
+        theme = self._storage.retrieve_struct(
+            Theme, theme_name, ignore_errors=True
+        )
         if theme is None:
             raise ValueError("Theme '{theme_name}' not found")
         # TODO: if cached theme cannot be edited while using assistant
@@ -415,7 +432,11 @@ class Assistant:
         return theme
 
     def get_welcome_message(self) -> str:
-        return self._get_current_agent().config.welcome_message
+        return self._get_current_agent().state.config.welcome_message
+
+    def get_commands(self) -> dict[str, BaseCommand]:
+        return self.command_executor.commands
+        # TODO: stronger coupling? -> get_command(str) + get_command_list?
 
     # PRIVATE METHODS
 
@@ -466,8 +487,7 @@ class Assistant:
                     config=blueprint,
                     tool_pool=self._tool_pool,
                     storage=self.storage,
-                    callbacks=self._llm_callbacks,
-                    warning_callback=self._warning_callback,
+                    callbacks=self._callbacks,
                 )
                 self.agent_blueprints[name] = blueprint
 
@@ -476,7 +496,7 @@ class Assistant:
             else:
                 agent = blueprint.instantiate(llm=self._current_llm)
                 agent_id = agent.agent_id
-            self._current_llm = agent.llm_config
+            self._current_llm = agent.state.llm
             self._agents[name] = agent
             # Add runtime state to session (even if previously we had one there)
             self.session.agents[agent_id] = agent.state
@@ -509,7 +529,9 @@ class Assistant:
         self._store_session()
         return result
 
-    def _ps_replacer(self, var: str, extender: Callable[[str,str], str|None]|None=None) -> str:
+    def _ps_replacer(
+        self, var: str, extender: Callable[[str, str], str | None] | None = None
+    ) -> str:
         """Replace a single prompt-string placeholder variable.
 
         For supported variables, see :meth:`eval_prompt_string`

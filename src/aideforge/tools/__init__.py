@@ -3,6 +3,7 @@ import importlib
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,6 +16,7 @@ __all__ = [
     "BaseAideForgeTool",
     "PreconfiguredTool",
     "ToolBlueprintType",
+    "ToolPolicy",
     "ToolType",
 ]
 
@@ -38,6 +40,12 @@ class PreconfiguredTool:
     tool: type[BaseTool]
     config: dict[str, Any] | None = None
 
+
+class ToolPolicy(StrEnum):
+    INHERIT = "inherit"
+    ALLOW = "allow"
+    ASK = "ask"
+    DENY = "deny"
 
 ToolType = BaseTool | Callable[..., Any]
 ToolBlueprintType = type[BaseTool] | PreconfiguredTool | Callable[..., Any]

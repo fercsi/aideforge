@@ -4,6 +4,8 @@ from . import (
     BaseCommand,
     CommandArgumentParser,
     CommandExecutionError,
+)
+from aideforge.results import (
     CommandOutput,
     CommandResult,
     InvalidArgument,

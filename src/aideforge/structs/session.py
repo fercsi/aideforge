@@ -3,7 +3,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, Field
 
 from aideforge.utils import IdType, create_id
-from .agent import AgentConfig
+from .agent import AgentConfig, ContextInfo
 from .common import ToolPolicy
 
 from .abc import BaseStruct
@@ -17,6 +17,9 @@ class AgentState(BaseModel):
     config: AgentConfig
     threads: list[IdType] = Field(..., description="List of agent's threads")
     llm: LlmConfig = Field(..., description="Current LLM used by the agent")
+    context_info: ContextInfo = Field(
+        default_factory=ContextInfo, description="Information about the context"
+    )
     tool_policy: dict[str, ToolPolicy] | None = Field(
         default=None, description="Policy information for each tools"
     )
@@ -39,8 +42,7 @@ class SessionState(BaseStruct):
         description="Agents' current state",
     )
     current_agent: IdType | None = Field(
-        default = None,
-        description="ID of current agent"
+        default=None, description="ID of current agent"
     )
     history: list[str] = Field(
         default_factory=list,
@@ -53,7 +55,7 @@ class SessionState(BaseStruct):
             "The same as len(history) until history is truncated."
         ),
     )
-#>    events: list[SessionEvent] = Field(default_factory=list)
+    # list[SessionEvent] = Field(default_factory=list)
     env: dict[str, Any] | None = Field(
         default=None,
         description="Environment dependent extra information like CWD.",

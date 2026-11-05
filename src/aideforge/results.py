@@ -4,8 +4,35 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, Field
 
+__all__ = [
+    "CommandExecutionError",
+    "CommandOutput",
+    "Error",
+    "ErrorCode",
+    "ExitAssistant",
+    "InternalError",
+    "InvalidArgument",
+    "LlmError",
+    "LlmResponse",
+    "Result",
+    "Success",
+    "UnknownCommand",
+]
 
-class Success(BaseModel):
+
+class Result(BaseModel):
+    """Represents a result returned by prompt processors
+
+    Attributes
+    ----------
+    status : str
+        Type of the result
+    """
+
+    status: str
+
+
+class Success(Result):
     """Represents a successful command result.
 
     Attributes
@@ -17,7 +44,10 @@ class Success(BaseModel):
     status: Literal["ok"] = "ok"
 
 
-class BaseError(BaseModel):
+# ERRONEAUS RESULTS
+
+
+class Error(Result):
     """Base model for error results.
 
     Attributes
@@ -56,7 +86,7 @@ class ErrorCode(StrEnum):
     INTERNAL_ERROR = "internal_error"
 
 
-class UnknownCommand(BaseError):
+class UnknownCommand(Error):
     """Error raised when an unknown command is requested.
 
     Attributes
@@ -68,7 +98,7 @@ class UnknownCommand(BaseError):
     error_code: Literal[ErrorCode.UNKNOWN_COMMAND] = ErrorCode.UNKNOWN_COMMAND
 
 
-class InvalidArgument(BaseError):
+class InvalidArgument(Error):
     """Error raised when invalid arguments are provided to a command.
 
     Attributes
@@ -80,7 +110,7 @@ class InvalidArgument(BaseError):
     error_code: Literal[ErrorCode.INVALID_ARGUMENT] = ErrorCode.INVALID_ARGUMENT
 
 
-class CommandExecutionError(BaseError):
+class CommandExecutionError(Error):
     """Error raised when a command fails during execution.
 
     Attributes
@@ -94,7 +124,7 @@ class CommandExecutionError(BaseError):
     ] = ErrorCode.COMMAND_EXECUTION_ERROR
 
 
-class LlmError(BaseError):
+class LlmError(Error):
     """Error raised when communication with the LLM fails.
 
     Attributes
@@ -106,7 +136,7 @@ class LlmError(BaseError):
     error_code: Literal[ErrorCode.LLM_ERROR] = ErrorCode.LLM_ERROR
 
 
-class InternalError(BaseError):
+class InternalError(Error):
     """Error raised for unexpected internal failures.
 
     Attributes
@@ -170,3 +200,94 @@ class InternalError(BaseError):
             ],
             traceback=tb_lines,
         )
+
+
+# COMMAND RELATED RESULTS
+
+
+class CommandOutput(Result):
+    """Result model for command output (non-LLM-response text).
+
+    Attributes
+    ----------
+    status : Literal["output"]
+        The status of the result.
+    content : str
+        The output text produced by the command.
+    """
+
+    status: Literal["output"] = "output"
+    content: str
+
+
+class ExitAssistant(Result):
+    """Result model indicating the assistant should exit.
+
+    Attributes
+    ----------
+    status : Literal["exit"]
+        The status of the result, always ``"exit"``.
+    """
+
+    status: Literal["exit"] = "exit"
+
+
+#: CommandSuccess
+#: --------------
+#:
+#: Represents the possible successful outcomes of a command.
+#:
+#: This type alias can be one of:
+#:
+#: - ``Success``
+#: - ``CommandOutput``
+#: - ``ExitAssistant``
+CommandSuccess = Annotated[
+    Success | CommandOutput | ExitAssistant, Field(discriminator="status")
+]
+
+#: CommandError
+#: ------------
+#:
+#: Represents the possible failed outcomes of a command.
+#:
+#: This type alias can be one of:
+#:
+#:   - ``UnknownCommand``
+#:   - ``InvalidArgument``
+#:   - ``CommandExecutionError``
+#:   - ``InternalError``
+CommandError = Annotated[
+    UnknownCommand | InvalidArgument | CommandExecutionError | InternalError,
+    Field(discriminator="error_code"),
+]
+
+#: CommandResult
+#: -------------
+#:
+#: Represents the possible outcomes of a command.
+#:
+#: This type alias can be one of:
+#:
+#: - ``CommandSuccess``
+#: - ``CommandError``
+CommandResult = Annotated[
+    CommandSuccess | CommandError, Field(discriminator="status")
+]
+
+# LLM RELATED RESULTS
+
+
+class LlmResponse(BaseModel):
+    """Represents a successful LLM response.
+
+    Attributes
+    ----------
+    status : Literal["response"]
+        The status of the response, always ``"response"``.
+    content : str or None
+        The text content returned by the LLM.
+    """
+
+    status: Literal["response"] = "response"
+    content: str | None
