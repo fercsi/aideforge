@@ -47,6 +47,7 @@ class ToolPolicy(StrEnum):
     ASK = "ask"
     DENY = "deny"
 
+
 ToolType = BaseTool | Callable[..., Any]
 ToolBlueprintType = type[BaseTool] | PreconfiguredTool | Callable[..., Any]
 
