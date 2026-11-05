@@ -50,9 +50,8 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime as LangGraphRuntime
 from langgraph.types import Command as LangGraphCommand
 
-from aideforge.abc import AbstractAgentRuntime
+from aideforge.abc import AbstractAgentRuntime, AbstractStorage
 from aideforge.results import LlmError, LlmResponse, InternalError
-from aideforge.storage import BaseStorage
 from aideforge.structs import (
     AgentConfig,
     AgentState,
@@ -75,7 +74,7 @@ class AgentRuntime(AbstractAgentRuntime):
         *,
         setup: AgentSetup,
         config: AgentConfig,
-        storage: BaseStorage | None = None,
+        storage: AbstractStorage | None = None,
     ) -> None:
         """Initialize the agent runtime with resolved configuration.
 
@@ -87,7 +86,7 @@ class AgentRuntime(AbstractAgentRuntime):
         config : AgentConfig
             The agent configuration containing tool policies, tools,
             system prompt, context, and LLM defaults.
-        storage : BaseStorage or None, optional
+        storage : AbstractStorage or None, optional
             Storage backend for retrieving content resources. If ``None``,
             resources can be implemented only with their inline content.
         """

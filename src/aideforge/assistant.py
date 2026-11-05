@@ -27,8 +27,9 @@ from .commands import (
     CommandExecutor,
     default_commands,
 )
+from .abc import AbstractStorage
 from .results import CommandError, CommandSuccess, LlmError, LlmResponse
-from .storage import BaseStorage, MemoryStorage
+from .storage import MemoryStorage
 from .structs import (
     AgentConfig,
     AssistantSettings,
@@ -108,7 +109,7 @@ class Assistant:
     def __init__(
         self,
         *,
-        storage: BaseStorage | None = None,
+        storage: AbstractStorage | None = None,
         default_settings: AssistantSettingsInputType | None = None,
         session: SessionState | dict[str, Any] | str | None = None,
         agents: AssistantAgentsInputType | None = None,

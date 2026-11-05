@@ -4,6 +4,7 @@ from typing import cast
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
+from aideforge.abc import AbstractStorage, StructT
 from aideforge.structs import (
     BaseStruct,
     BaseIncrementalStruct,
@@ -11,12 +12,11 @@ from aideforge.structs import (
     ChangeProperty,
     StructProxy,
 )
-from .abc import BaseStorage, StructT
 
 __all__ = ["MemoryStorage"]
 
 
-class MemoryStorage(BaseStorage):
+class MemoryStorage(AbstractStorage):
     checkpoint_saver: InMemorySaver = InMemorySaver()
     resources: dict[str, str | bytes] = {}
     structs: defaultdict[str, dict[str, BaseStruct]] = defaultdict(dict)

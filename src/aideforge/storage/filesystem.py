@@ -1,5 +1,12 @@
 # TODO: expanduser wherever applicable. Maybe only in struct_paths?
 # TODO: figure out which EXCLUSIONS to use: unset, defaults, none, computed_fields
+# TODO: Async solution
+#import aiosqlite
+#from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+#conn = await aiosqlite.connect("checkpoint.db")
+#checkpointer = AsyncSqliteSaver(conn)
+#await conn.close()
+
 import json
 import os
 import yaml
@@ -7,9 +14,14 @@ from itertools import product
 from pathlib import Path
 from typing import Any, cast
 
+#import aiosqlite
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+#from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+import sqlite3
 
+from aideforge.abc import AbstractStorage, StructT
 from aideforge.structs import (
     BaseStruct,
     BaseIncrementalStruct,
@@ -18,7 +30,6 @@ from aideforge.structs import (
     StructProxy,
 )
 from aideforge.utils import deep_merge, remove_nones
-from .abc import BaseStorage, StructT
 
 __all__ = ["FileSystemStorage"]
 
@@ -26,7 +37,7 @@ EXTENSIONS = (".json", ".jsonl", ".yaml", ".yml")
 EXCLUSIONS = {}
 
 
-class FileSystemStorage(BaseStorage):
+class FileSystemStorage(AbstractStorage):
     """Storage backend that persists structs to the filesystem as JSON or YAML.
 
     Structs are written to and read from one or more configurable search
@@ -60,10 +71,11 @@ class FileSystemStorage(BaseStorage):
         # assumes valid inputs)
         self.struct_paths = [] if struct_paths is None else struct_paths.copy()
         self.struct_format = struct_format
-        if FileSystemStorage.checkpoint_saver is None:
-            # TODO Change to persistent saver!
-            # TODO ThreadSafe! (Singleton?)
-            FileSystemStorage.checkpoint_saver = InMemorySaver()
+        self._conn = None
+
+    def __del__(self) -> None:
+        if self._conn:
+            self._conn.close()
 
     def retrieve_resource(
         self,
@@ -251,6 +263,12 @@ class FileSystemStorage(BaseStorage):
 
     def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
         _ = saver_id
+        if FileSystemStorage.checkpoint_saver is None:
+#>            dbpath = self._get_path(None, "checkpoint.db")
+#>            self._conn = sqlite3.connect(dbpath)
+#>            # TODO ThreadSafe! (Singleton?)
+#>            FileSystemStorage.checkpoint_saver = SqliteSaver(self._conn)
+            FileSystemStorage.checkpoint_saver = InMemorySaver()
         return FileSystemStorage.checkpoint_saver
 
     # private methods
@@ -331,13 +349,13 @@ class FileSystemStorage(BaseStorage):
             chprop = cast(ChangeProperty, event)
             chprop.change(struct)
 
-    def _get_path(self, struct: BaseStruct, struct_name: str | None) -> Path:
+    def _get_path(self, struct: BaseStruct|None, struct_name: str | None) -> Path:
         if struct_name is None:
             struct_name = struct.storage_name.format(struct=struct)
         ext = self.struct_format.lower()
-        if struct.storage_mode == "incremental" and ext == "json":
+        if struct and struct.storage_mode == "incremental" and ext == "json":
             ext = "jsonl"
-        if struct.kinds is not None:
+        if struct and struct.kinds is not None:
             filename = f"%/{struct.kinds}/{struct_name}.{ext}"
         else:
             filename = f"%/{struct_name}.{ext}"

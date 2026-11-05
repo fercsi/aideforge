@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aideforge.storage import BaseStorage
+    from aideforge.abc import AbstractStorage
     from aideforge.structs import (
         AgentConfig,
         AgentState,
@@ -34,7 +34,7 @@ class AbstractAgentBlueprint(ABC):
         A list of tools available to the agent. Each entry may be a
         :class:`BaseTool` subclass, a :class:`PreconfiguredTool`, or a
         callable. If ``None``, no tools are available.
-    storage : BaseStorage or None, optional
+    storage : AbstractStorage or None, optional
         Storage backend for retrieving content resources. If ``None``,
         resources can be implemented only with their inline content.
 
@@ -51,7 +51,7 @@ class AbstractAgentBlueprint(ABC):
         config: AgentConfig | dict[str, Any] | None = None,
         *,
         tool_pool: list[ToolType] | None = None,
-        storage: BaseStorage | None = None,
+        storage: AbstractStorage | None = None,
         callbacks: Callbacks | None = None,
     ) -> None:
         """Initialize an :class:`AgentBlueprint` instance.
@@ -68,7 +68,7 @@ class AbstractAgentBlueprint(ABC):
             A list of tools available to the agent. Each entry may be a
             :class:`BaseTool` subclass, a :class:`PreconfiguredTool`, or a
             callable. If ``None``, no tools are available.
-        storage : BaseStorage or None, optional
+        storage : AbstractStorage or None, optional
             Storage backend for retrieving content resources. If ``None``,
             resources can be implemented only with their inline content.
         callbacks : Callbacks or None, optional

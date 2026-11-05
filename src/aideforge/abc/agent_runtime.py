@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import AsyncGenerator, Generator
 
+    from aideforge.abc import AbstractStorage
     from aideforge.results import LlmError, LlmResponse
-    from aideforge.storage import BaseStorage
     from aideforge.structs import (
         AgentConfig,
         AgentState,
@@ -78,7 +78,7 @@ class AbstractAgentRuntime(ABC):
         *,
         setup: AgentSetup,
         config: AgentConfig,
-        storage: BaseStorage | None = None,
+        storage: AbstractStorage | None = None,
     ) -> None:
         """Initialize the agent runtime with resolved configuration.
 
@@ -90,7 +90,7 @@ class AbstractAgentRuntime(ABC):
         config : AgentConfig
             The agent configuration containing tool policies, tools,
             system prompt, context, and LLM defaults.
-        storage : BaseStorage or None, optional
+        storage : AbstractStorage or None, optional
             Storage backend for retrieving content resources. If ``None``,
             resources can be implemented only with their inline content.
         """

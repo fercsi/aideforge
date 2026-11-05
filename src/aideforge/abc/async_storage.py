@@ -1,3 +1,5 @@
+# After changing this file run the following command
+# sed -r -e 's/[Aa]sync ?//' -e '1,2c\# This file is auto-generated. Do not edit manually.' async_storage.py >storage.py
 from abc import ABC, abstractmethod
 from typing import TypeVar
 
@@ -5,12 +7,12 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from aideforge.structs import BaseStruct, BaseIncrementalStruct, BaseEvent
 
-__all__ = ["BaseStorage", "StructT"]
+__all__ = ["AbstractAsyncStorage", "StructT"]
 
 StructT = TypeVar("StructT", bound=BaseStruct)
 
 
-class BaseStorage(ABC):
+class AbstractAsyncStorage(ABC):
     """Abstract base class for struct storage backends.
 
     A storage backend is responsible for persisting, retrieving, and
@@ -19,7 +21,7 @@ class BaseStorage(ABC):
     """
 
     @abstractmethod
-    def retrieve_resource(
+    async def retrieve_resource(
         self,
         path: str,
         *,
@@ -48,7 +50,7 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def store_resource(
+    async def store_resource(
         self,
         path: str,
         content: str|bytes,
@@ -70,7 +72,7 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def retrieve_struct(
+    async def retrieve_struct(
         self,
         struct_type: type[StructT],
         struct_name: str | None = None,
@@ -99,7 +101,7 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def store_struct(
+    async def store_struct(
         self, struct: BaseStruct, struct_name: str | None = None,
         *,
         ignore_failure: bool = False,
@@ -117,7 +119,7 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def store_struct_increment(
+    async def store_struct_increment(
         self,
         struct: BaseIncrementalStruct,
         increment: BaseEvent,
@@ -141,7 +143,7 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def list_structs(self, struct_type: type[BaseStruct]) -> list[str]:
+    async def list_structs(self, struct_type: type[BaseStruct]) -> list[str]:
         """List all stored struct names for a given struct type.
 
         Parameters
@@ -157,7 +159,7 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
+    async def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
         """Returns the requested checkpoint saver
 
         Usually a single checkpoint saver for the whole application is

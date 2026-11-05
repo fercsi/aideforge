@@ -19,7 +19,7 @@ class BaseStruct(BaseModel):
     """Base model for all persistent structs.
 
     A struct is a Pydantic model that can be stored and retrieved by a
-    :class:`~aideforge.storage.abc.BaseStorage` backend.  It carries a
+    :class:`~aideforge.abc.storage.AbstractStorage` backend.  It carries a
     ``kind`` and ``version`` along with optional meta fields that control
     storage scoping and naming.
 

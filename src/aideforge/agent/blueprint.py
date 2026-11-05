@@ -9,8 +9,7 @@ from langchain.tools import BaseTool
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tools import StructuredTool
 
-from aideforge.abc import AbstractAgentBlueprint
-from aideforge.storage import BaseStorage
+from aideforge.abc import AbstractAgentBlueprint, AbstractStorage
 from aideforge.structs import AgentConfig, AgentState, Content, LlmConfig
 from aideforge.tools import PreconfiguredTool, ToolType
 from aideforge.utils import IdType, create_id, deep_merge
@@ -27,7 +26,7 @@ class AgentBlueprint(AbstractAgentBlueprint):
         config: AgentConfig | dict[str, Any] | None = None,
         *,
         tool_pool: list[ToolType] | None = None,
-        storage: BaseStorage | None = None,
+        storage: AbstractStorage | None = None,
         callbacks: BaseCallbackHandler
         | list[BaseCallbackHandler]
         | None = None,
