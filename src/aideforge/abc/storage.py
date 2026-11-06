@@ -1,4 +1,3 @@
-# This file is auto-generated. Do not edit manually.
 from abc import ABC, abstractmethod
 from typing import TypeVar
 
@@ -17,7 +16,37 @@ class AbstractStorage(ABC):
     A storage backend is responsible for persisting, retrieving, and
     listing struct instances (``BaseStruct`` subclasses) in a
     concrete medium (e.g. the filesystem, a database, or a remote API).
+
+    NOTE: Every function has both a synchronous and an asynchronous version.
+    By default, each asynchronous version runs the corresponding synchronous
+    function in a separate thread using ``asyncio.to_thread()``. In many
+    cases, this is sufficient, and there is no need to implement a dedicated
+    asynchronous version.
     """
+
+    def prepare(self) -> None:
+        """Prepare storage operations
+        """
+        pass
+
+    async def aprepare(self) -> None:
+        """Prepare storage operations
+
+        This is the asynchron version of :meth:`prepare`.
+        """
+        return await asyncio.to_thread(self.prepare)
+        
+    def cleanup(self) -> None:
+        """Clean up storage operations
+        """
+        pass
+
+    async def acleanup(self) -> None:
+        """Clean up storage operations
+
+        This is the asynchron version of :meth:`cleanup`.
+        """
+        return await asyncio.to_thread(self.cleanup)
 
     @abstractmethod
     def retrieve_resource(
@@ -48,11 +77,29 @@ class AbstractStorage(ABC):
         """
         pass
 
+    async def aretrieve_resource(
+        self,
+        path: str,
+        *,
+        mode: str = "t",
+        ignore_failure: bool = False,
+    ) -> str | bytes | None:
+        """Retrieve a resource from the storage backend.
+
+        This is the asynchron version of :meth:`retrieve_resource`.
+        """
+        return await asyncio.to_thread(
+            self.retrieve_resource,
+            path=path,
+            mode=mode,
+            ignore_failure=ignore_failure,
+        )
+
     @abstractmethod
     def store_resource(
         self,
         path: str,
-        content: str|bytes,
+        content: str | bytes,
         *,
         ignore_failure: bool = False,
     ) -> None:
@@ -69,6 +116,24 @@ class AbstractStorage(ABC):
             resource cannot be stored.
         """
         pass
+
+    async def astore_resource(
+        self,
+        path: str,
+        content: str | bytes,
+        *,
+        ignore_failure: bool = False,
+    ) -> None:
+        """Store a resource to the storage backend.
+
+        This is the asynchron version of :meth:`store_resource`.
+        """
+        return await asyncio.to_thread(
+            self.store_resource,
+            path=path,
+            content=content,
+            ignore_failure=ignore_failure,
+        )
 
     @abstractmethod
     def retrieve_struct(
@@ -99,9 +164,29 @@ class AbstractStorage(ABC):
         """
         pass
 
+    async def aretrieve_struct(
+        self,
+        struct_type: type[StructT],
+        struct_name: str | None = None,
+        *,
+        ignore_failure: bool = False,
+    ) -> StructT | None:
+        """Retrieve a struct from the storage backend.
+
+        This is the asynchron version of :meth:`retrieve_struct`.
+        """
+        return await asyncio.to_thread(
+            self.retrieve_struct,
+            struct_type=struct_type,
+            struct_name=struct_name,
+            ignore_failure=ignore_failure,
+        )
+
     @abstractmethod
     def store_struct(
-        self, struct: BaseStruct, struct_name: str | None = None,
+        self,
+        struct: BaseStruct,
+        struct_name: str | None = None,
         *,
         ignore_failure: bool = False,
     ) -> None:
@@ -116,6 +201,24 @@ class AbstractStorage(ABC):
             default name is derived from ``struct.storage_name``.
         """
         pass
+
+    async def astore_struct(
+        self,
+        struct: BaseStruct,
+        struct_name: str | None = None,
+        *,
+        ignore_failure: bool = False,
+    ) -> None:
+        """Store a struct in the storage backend.
+
+        This is the asynchron version of :meth:`store_struct`.
+        """
+        return await asyncio.to_thread(
+            self.store_struct,
+            struct_type=struct_type,
+            struct_name=struct_name,
+            ignore_failure=ignore_failure,
+        )
 
     @abstractmethod
     def store_struct_increment(
@@ -141,6 +244,26 @@ class AbstractStorage(ABC):
         """
         pass
 
+    async def astore_struct_increment(
+        self,
+        struct: BaseIncrementalStruct,
+        increment: BaseEvent,
+        *,
+        struct_name: str | None = None,
+        ignore_failure: bool = False,
+    ) -> None:
+        """Stores an increment to an incrementally stored struct
+
+        This is the asynchron version of :meth:`store_struct_increment`.
+        """
+        return await asyncio.to_thread(
+            self.store_struct_increment,
+            struct_type=struct_type,
+            increment=increment,
+            struct_name=struct_name,
+            ignore_failure=ignore_failure,
+        )
+
     @abstractmethod
     def list_structs(self, struct_type: type[BaseStruct]) -> list[str]:
         """List all stored struct names for a given struct type.
@@ -157,12 +280,24 @@ class AbstractStorage(ABC):
         """
         pass
 
+    async def alist_structs(self, struct_type: type[BaseStruct]) -> list[str]:
+        """List all stored struct names for a given struct type.
+
+        This is the asynchron version of :meth:`list_structs`.
+        """
+        return await asyncio.to_thread(
+            self.list_structs,
+            struct_type=struct_type,
+        )
+
     @abstractmethod
-    def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
+    def get_checkpoint_saver(
+        self, saver_id: str | None = None
+    ) -> BaseCheckpointSaver:
         """Returns the requested checkpoint saver
 
         Usually a single checkpoint saver for the whole application is
-        sufficient. If multiple savers are needed, use ``saver_id`` to 
+        sufficient. If multiple savers are needed, use ``saver_id`` to
         identify them. E.g. ``str(session_id)``
 
         Parameters
@@ -176,3 +311,15 @@ class AbstractStorage(ABC):
             Checkpoint saver instance
         """
         pass
+
+    async def aget_checkpoint_saver(
+        self, saver_id: str | None = None
+    ) -> BaseCheckpointSaver:
+        """Returns the requested checkpoint saver
+
+        This is the asynchron version of :meth:`get_checkpoint_saver`.
+        """
+        return await asyncio.to_thread(
+            self.get_checkpoint_saver,
+            saver_id=saver_id,
+        )

@@ -88,7 +88,7 @@ class AgentBlueprint(AbstractAgentBlueprint):
     ) -> AgentRuntime:
         tools = self._prepare_tools()
         setup = AgentSetup(
-            agent_id=gent_id,
+            agent_id=agent_id,
             name=self.name,
             threads=state.threads,
             llm_config=state.llm,

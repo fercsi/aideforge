@@ -200,6 +200,7 @@ class Cli:
         when the assistant returns an ``"exit"`` status.
         """
         assistant = self._assistant
+        await assistant.aprepare()
         session = assistant.session
 
         ui_settings = assistant.get_settings("ui")
@@ -268,7 +269,7 @@ class Cli:
                         f"Command status '{response.status}' is unknown"
                     )
         finally:
-            assistant.shutdown()
+            await assistant.acleanup()
             print(f"\nSession {assistant.session.session_id} has ended.")
 
     def _action_input(self, request: ActionRequest) -> ApprovalDecision:

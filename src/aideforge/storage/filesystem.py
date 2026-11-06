@@ -14,11 +14,11 @@ from itertools import product
 from pathlib import Path
 from typing import Any, cast
 
-#import aiosqlite
+import aiosqlite
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
-#from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 import sqlite3
 
 from aideforge.abc import AbstractStorage, StructT
@@ -77,6 +77,26 @@ class FileSystemStorage(AbstractStorage):
         if self._conn:
             self._conn.close()
 
+    def prepare(self) -> None:
+        dbpath = self._get_path(None, "checkpoint.db")
+        self._conn = sqlite3.connect(dbpath)
+        FileSystemStorage.checkpoint_saver = SqliteSaver(self._conn)
+
+    async def aprepare(self) -> None:
+        dbpath = self._get_path(None, "checkpoint.db")
+        self._conn = await aiosqlite.connect(dbpath)
+        FileSystemStorage.checkpoint_saver = AsyncSqliteSaver(self._conn)
+
+    def cleanup(self) -> None:
+        if self._conn:
+            self._conn.close()
+        self._conn = None
+
+    async def acleanup(self) -> None:
+        if self._conn:
+            await self._conn.close()
+        self._conn = None
+
     def retrieve_resource(
         self,
         path: str,
@@ -84,25 +104,6 @@ class FileSystemStorage(AbstractStorage):
         mode: str = "t",
         ignore_failure: bool = False,
     ) -> str | bytes | None:
-        """Retrieve a resource from the storage backend.
-
-        Parameters
-        ----------
-        path : str
-            Path of the resource to retrieve.
-        mode : str, optional
-            Mode how the resource should be returned, ``"t"`` for text (default)
-            and ``"b"`` for binary.
-        ignore_failure : bool, optional
-            When ``True``, return ``None`` instead of raising if the
-            resource cannot be found.
-
-        Returns
-        -------
-        str or bytes or None
-            The retrieved content, or ``None`` if not found
-            and ``ignore_failure`` is ``True``.
-        """
         if mode not in ("b","t"):
             raise ValueError(f"Invalid retrieve mode '{mode}'")
         if path[0].isalpha():
@@ -130,19 +131,16 @@ class FileSystemStorage(AbstractStorage):
         *,
         ignore_failure: bool = False,
     ) -> None:
-        """Store a resource to the storage backend.
-
-        Parameters
-        ----------
-        path : str
-            Path of the resource to retrieve.
-        content : str | bytes
-            Content of the resource to be stored.
-        ignore_failure : bool
-            When ``True``, return instead of raising if the
-            resource cannot be stored.
-        """
-        pass
+        path = self._get_path(struct, struct_name)
+        mode = "wt" if isinstance(content, str) else "wb"
+        try:
+            with open(file, mode) as f:
+                f.write(content)
+        except OSError:
+            if ignore_failure:
+                return None
+            else:
+                raise
 
     def retrieve_struct(
         self,
@@ -151,30 +149,6 @@ class FileSystemStorage(AbstractStorage):
         *,
         ignore_failure: bool = False,
     ) -> StructT | None:
-        """Retrieve a struct from the filesystem and validate it.
-
-        Parameters
-        ----------
-        struct_type : type[StructT]
-            The BaseStruct class of the struct to retrieve.
-        struct_name : str or None
-            Name of the struct to retrieve.  When ``None``, it is derived
-            from ``struct_type.storage_name``.
-        ignore_failure : bool
-            When ``True``, return ``None`` instead of raising if the struct
-            cannot be found.
-
-        Returns
-        -------
-        StructT or None
-            The retrieved and validated struct, or ``None`` if not found
-            and ``ignore_failure`` is ``True``.
-
-        Raises
-        ------
-        FileNotFoundError
-            If the struct is not found and ``ignore_failure`` is ``False``.
-        """
         if struct_name is None:
             struct_name = struct_type.storage_name.format(
                 struct=StructProxy(struct_type)
@@ -202,16 +176,6 @@ class FileSystemStorage(AbstractStorage):
     def store_struct(
         self, struct: BaseStruct, struct_name: str | None = None
     ) -> None:
-        """Store a struct on the filesystem.
-
-        Parameters
-        ----------
-        struct : BaseStruct
-            The BaseStruct instance to store.
-        struct_name : str or None
-            Name under which the struct is stored.  When ``None``, it is
-            derived from ``struct.storage_name``.
-        """
         path = self._get_path(struct, struct_name)
         self._save_struct(struct, path)
 
@@ -222,36 +186,10 @@ class FileSystemStorage(AbstractStorage):
         *,
         struct_name: str | None = None,
     ) -> None:
-        """Stores an increment to an incrementally stored struct
-
-        Parameters
-        ----------
-        struct : BaseStruct
-            The BaseStruct instance to store.
-        increment : BaseStruct
-            The BaseStruct increment instance to store within ``struct`'s
-            scope.
-        struct_name : str or None
-            Name under which the struct is stored.  When ``None``, a
-            default name is derived from ``struct.storage_name``.
-        """
         path = self._get_path(struct, struct_name)
         self._append_struct_increment(struct, increment, path)
 
     def list_structs(self, struct_type: type[BaseStruct]) -> list[str]:
-        """List all stored struct names for a given struct type.
-
-        Parameters
-        ----------
-        struct_type : type[BaseStruct]
-            The BaseStruct class whose stored instances should be listed.
-
-        Returns
-        -------
-        list[str]
-            Sorted list of struct names (without file extensions) found
-            across all configured search paths.
-        """
         if struct_type.kinds is not None:
             struct_dir = f"%/{struct_type.kinds}"
             files = self._list_struct_files(struct_dir)
@@ -264,11 +202,13 @@ class FileSystemStorage(AbstractStorage):
     def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
         _ = saver_id
         if FileSystemStorage.checkpoint_saver is None:
-#>            dbpath = self._get_path(None, "checkpoint.db")
-#>            self._conn = sqlite3.connect(dbpath)
-#>            # TODO ThreadSafe! (Singleton?)
-#>            FileSystemStorage.checkpoint_saver = SqliteSaver(self._conn)
-            FileSystemStorage.checkpoint_saver = InMemorySaver()
+            self.prepare()
+        return FileSystemStorage.checkpoint_saver
+
+    async def aget_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
+        _ = saver_id
+        if FileSystemStorage.checkpoint_saver is None:
+            await self.aprepare()
         return FileSystemStorage.checkpoint_saver
 
     # private methods
@@ -355,7 +295,9 @@ class FileSystemStorage(AbstractStorage):
         ext = self.struct_format.lower()
         if struct and struct.storage_mode == "incremental" and ext == "json":
             ext = "jsonl"
-        if struct and struct.kinds is not None:
+        if struct is None:
+            filename = f"%/{struct_name}"
+        elif struct.kinds is not None:
             filename = f"%/{struct.kinds}/{struct_name}.{ext}"
         else:
             filename = f"%/{struct_name}.{ext}"

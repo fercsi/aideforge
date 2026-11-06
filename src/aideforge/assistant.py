@@ -204,7 +204,13 @@ class Assistant:
         self.description = description
         self._themes = theme_collection.copy()
 
-    def shutdown(self) -> None:
+    def prepare(self) -> None:
+        self.storage.prepare()
+
+    async def aprepare(self) -> None:
+        await self.storage.aprepare()
+
+    def cleanup(self) -> None:
         """
         It is highly recommended to call shutdown after usage
 
@@ -217,6 +223,11 @@ class Assistant:
         ...     assistant.shutdown()
         """
         self._store_session()
+        self.storage.cleanup
+
+    async def acleanup(self) -> None:
+        self._store_session()
+        await self.storage.acleanup()
 
     def change_session(
         self, session: SessionState | dict[str, Any] | str | None = None
