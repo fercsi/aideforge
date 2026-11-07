@@ -291,3 +291,14 @@ class LlmResponse(BaseModel):
 
     status: Literal["response"] = "response"
     content: str | None
+
+# ASSISTANT RELATED RESULTS
+
+PromptError = Annotated[
+    CommandError | LlmError, Field(descriminator="error_code")
+]
+
+PromptResult = Annotated[
+    LlmResponse | CommandSuccess | PromptError, Field(descriminator="status")
+]
+

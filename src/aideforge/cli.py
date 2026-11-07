@@ -14,10 +14,11 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 from pydantic import BaseModel, Field
 
-from .agent import ActionRequest, ApprovalDecision, Callbacks, LangChainCallbacks
-from .assistant import Assistant, PSEvalExtender
-from .structs import AssistantSettings, Theme, ThemeColor, UiSettings
-from .structs.theme import to_term_colors
+from aideforge.abc.callback import AgentCallbackHandler
+from aideforge.agent import ActionRequest, ApprovalDecision
+from aideforge.assistant import Assistant, TemplateResolver
+from aideforge.structs.settings import AssistantSettings, UiSettings
+from aideforge.structs.theme import Theme, ThemeColor, to_term_colors
 
 __all__ = ["Cli", "CliCallbackHandler"]
 
@@ -26,7 +27,7 @@ class _Shared(BaseModel):
     ui_settings: UiSettings = Field(default_factory=UiSettings)
 
 
-class CliCallbackHandler(BaseCallbackHandler):
+class CliCallbackHandler(AgentCallbackHandler, BaseCallbackHandler):
     """Callback handler for printing LLM events to the terminal.
 
     Prints colorized information about LLM completions, tool calls, and
@@ -114,6 +115,12 @@ class CliCallbackHandler(BaseCallbackHandler):
         print(exception)
         print(kwargs)
 
+    # AgentCallbackHandler callbacks
+
+    def on_warning(self, content: str) -> None:
+        # TODO colorize
+        print(f"WARNING: {content}")
+
 
 class Cli:
     """Command-line interface for interacting with an :class:`Assistant`.
@@ -164,9 +171,9 @@ class Cli:
         self._assistant = assistant
         self._storage = assistant.storage
         # TODO warning callback
-        callbacks = LangChainCallbacks(llm = [callback_handler(shared=self._shared)])
-        self._assistant.update_callbacks(callbacks)
-        self._assistant.ensure_settings(default_settings)
+        self._callbacks = callback_handler(shared=self._shared)
+        # Don't override already loaded UI settings only ensure if it does not exist
+        self._assistant.settings.register(default_settings, ignore_failure=True)
 
     def process_arguments(self, args: list[str] | None = None, *, custom_parser:Callable[[argparse.ArgumentParser], None]|None=None) -> None:
         # Call this function if you would like to use default argument parsing
@@ -202,14 +209,16 @@ class Cli:
         assistant = self._assistant
         await assistant.aprepare()
         session = assistant.session
+        settings = assistant.settings
 
-        ui_settings = assistant.get_settings("ui")
+        print(assistant.settings.get_options())
+
+        ui_settings = assistant.settings.ui
         assert isinstance(ui_settings, UiSettings), f"Expected UiSettings, got {type(ui_settings).__name__}"
-        assistant_settings = assistant.get_settings("assistant")
+        assistant_settings = assistant.settings.assistant
         assert isinstance(assistant_settings, AssistantSettings), f"Expected AssistantSettings, got {type(assistant_settings).__name__}"
 
-#>        theme = self._storage.retrieve_struct(Theme, ui_settings.theme)
-        theme = assistant.get_theme(ui_settings.theme)
+        theme = settings.get_theme()
         colors = to_term_colors(theme.colors)
         hist_size = assistant_settings.history.size
         prompt_string = ui_settings.display.prompt_string
@@ -225,13 +234,13 @@ class Cli:
             readline.add_history(item)
         readline.set_auto_history(True)
 
-        welcome = assistant.get_welcome_message()
+        welcome = assistant.current_agent.state.config.welcome_message
         if welcome:
             _color_print(colors.welcome_message, welcome)
 
         try:
             while True:
-                ps_text = assistant.eval_prompt_string(prompt_string)
+                ps_text = assistant.render_template(prompt_string)
                 _color_print(colors.prompt_string, ps_text, end="")
                 _set_color(colors.input)
                 try:
@@ -244,7 +253,7 @@ class Cli:
                 if not query:
                     continue
 
-                processor = assistant.aprompt_processor(query)
+                processor = assistant.aprompt_processor(query, callbacks=self._callbacks)
                 response = await anext(processor)
                 while isinstance(response, ActionRequest):
                     decision = await self._aaction_input(response)
@@ -275,8 +284,8 @@ class Cli:
     def _action_input(self, request: ActionRequest) -> ApprovalDecision:
         colors = self._shared.colors
         display = self._shared.ui_settings.display
-        extender: PSEvalExtender = partial(_ps_extender, request)
-        ps_text = self._assistant.eval_prompt_string(display.tool_prompt_string, extender)
+        extension = PsActionResolver(request)
+        ps_text = self._assistant.render_template(display.tool_prompt_string, extension)
         ps_err = None
         _color_print(colors.tool_prompt_string, ps_text, end="")
         while True:
@@ -296,8 +305,8 @@ class Cli:
     async def _aaction_input(self, request: ActionRequest) -> ApprovalDecision:
         colors = self._shared.colors
         display = self._shared.ui_settings.display
-        extender:PSEvalExtender = partial(_ps_extender, request)
-        ps_text = self._assistant.eval_prompt_string(display.tool_prompt_string, extender)
+        extension = PsActionResolver(request)
+        ps_text = self._assistant.render_template(display.tool_prompt_string, extension)
         ps_err = None
         _color_print(colors.tool_prompt_string, ps_text, end="")
         while True:
@@ -314,37 +323,41 @@ class Cli:
                 ps_err = self._assistant.eval_prompt_string(display.tool_prompt_error_string, extender)
             _color_print(colors.tool_prompt_string, ps_err, end="")
 
-def _ps_extender(request: ActionRequest, var: str, fmt: str = "") -> str|None:
-    # if var or fmt is not valid, None must be returned without raising an error
-    # see details at ``PSEvalExtender``
-    # {tool}
-    # {arga:min} = {args}
-    # {args:pretty}
-    # {args:pretty,4} does not indenr first row. User can indent it with whatever they want
-    # {args:json}
-    # {args:json,2}
-    if var == "tool":
-        if fmt == "":
-            return request.name
-    if var == "args":
-        if fmt in ("min", ""):
-            return str(request.args)
-        fmts = fmt.split(",")
-        if len(fmts) == 1:
-            indent = 0
-        elif len(fmts) == 2 and fmts[1].isdigit():
-            indent = int(fmts[1])
-        else:
-            return None
-        if fmts[0] == "pretty":
-            sep = "\n" + " " * indent
-            argstxt = sep.join(f"{k} = {v!r}" for k, v in request.args.items())
-            return argstxt
-        if fmts[0] == "json":
-            # TODO: ending "}" is on col 0
-            argstxt = json.dumps(request.args, indent=indent)
-            return argstxt
-    return None
+class PsActionResolver(TemplateResolver):
+    def __init__(self, request: ActionRequest) -> None:
+        self._request = request
+
+    def resolver(self, var: str, fmt: str = "") -> str|None:
+        # if var or fmt is not valid, None must be returned without raising an error
+        # {tool}
+        # {arga:min} = {args}
+        # {args:pretty}
+        # {args:pretty,4} does not indenr first row. User can indent it with whatever they want
+        # {args:json}
+        # {args:json,2}
+        request = self._request
+        if var == "tool":
+            if fmt == "":
+                return request.name
+        if var == "args":
+            if fmt in ("min", ""):
+                return str(request.args)
+            fmts = fmt.split(",")
+            if len(fmts) == 1:
+                indent = 0
+            elif len(fmts) == 2 and fmts[1].isdigit():
+                indent = int(fmts[1])
+            else:
+                return None
+            if fmts[0] == "pretty":
+                sep = "\n" + " " * indent
+                argstxt = sep.join(f"{k} = {v!r}" for k, v in request.args.items())
+                return argstxt
+            if fmts[0] == "json":
+                # TODO: ending "}" is on col 0
+                argstxt = json.dumps(request.args, indent=indent)
+                return argstxt
+        return None
 
 def _eval_answer(answer: str) -> ApprovalDecision | None:
     answer = answer.strip().lower()

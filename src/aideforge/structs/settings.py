@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 from enum import StrEnum
-from typing import Annotated, Any, ClassVar, Literal, Union
+from typing import Annotated, Any, ClassVar, Literal, Union, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from aideforge.abc import AbstractStorage
 from aideforge.exceptions import DuplicateKeyError
 from .abc import BaseStruct
 from .common import Switch
 from .llm import LlmConfig
 from .theme import Theme, theme_collection
+
+if TYPE_CHECKING:
+    from aideforge.abc.storage import AbstractStorage
 
 __all__ = [
     "AssistantSettings",

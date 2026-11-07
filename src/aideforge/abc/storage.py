@@ -1,16 +1,17 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import TypeVar
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from aideforge.structs import BaseStruct, BaseIncrementalStruct, BaseEvent
+from aideforge.structs.abc import BaseStruct, BaseIncrementalStruct, BaseEvent
+from .lifecycle import Lifecycle
 
 __all__ = ["AbstractStorage", "StructT"]
 
 StructT = TypeVar("StructT", bound=BaseStruct)
 
 
-class AbstractStorage(ABC):
+class AbstractStorage(Lifecycle):
     """Abstract base class for struct storage backends.
 
     A storage backend is responsible for persisting, retrieving, and
@@ -23,30 +24,6 @@ class AbstractStorage(ABC):
     cases, this is sufficient, and there is no need to implement a dedicated
     asynchronous version.
     """
-
-    def prepare(self) -> None:
-        """Prepare storage operations
-        """
-        pass
-
-    async def aprepare(self) -> None:
-        """Prepare storage operations
-
-        This is the asynchron version of :meth:`prepare`.
-        """
-        return await asyncio.to_thread(self.prepare)
-        
-    def cleanup(self) -> None:
-        """Clean up storage operations
-        """
-        pass
-
-    async def acleanup(self) -> None:
-        """Clean up storage operations
-
-        This is the asynchron version of :meth:`cleanup`.
-        """
-        return await asyncio.to_thread(self.cleanup)
 
     @abstractmethod
     def retrieve_resource(
@@ -75,7 +52,7 @@ class AbstractStorage(ABC):
             The retrieved content, or ``None`` if not found
             and ``ignore_failure`` is ``True``.
         """
-        pass
+        ...
 
     async def aretrieve_resource(
         self,
@@ -115,7 +92,7 @@ class AbstractStorage(ABC):
             When ``True``, return instead of raising if the
             resource cannot be stored.
         """
-        pass
+        ...
 
     async def astore_resource(
         self,
@@ -162,7 +139,7 @@ class AbstractStorage(ABC):
             The retrieved and validated struct, or ``None`` if not found
             and ``ignore_failure`` is ``True``.
         """
-        pass
+        ...
 
     async def aretrieve_struct(
         self,
@@ -200,7 +177,7 @@ class AbstractStorage(ABC):
             Name under which the struct is stored.  When ``None``, a
             default name is derived from ``struct.storage_name``.
         """
-        pass
+        ...
 
     async def astore_struct(
         self,
@@ -242,7 +219,7 @@ class AbstractStorage(ABC):
             Name under which the struct is stored.  When ``None``, a
             default name is derived from ``struct.storage_name``.
         """
-        pass
+        ...
 
     async def astore_struct_increment(
         self,
@@ -278,7 +255,7 @@ class AbstractStorage(ABC):
         list[str]
             Sorted list of struct names found in the storage backend.
         """
-        pass
+        ...
 
     async def alist_structs(self, struct_type: type[BaseStruct]) -> list[str]:
         """List all stored struct names for a given struct type.
@@ -310,7 +287,7 @@ class AbstractStorage(ABC):
         BaseCheckpointSaver
             Checkpoint saver instance
         """
-        pass
+        ...
 
     async def aget_checkpoint_saver(
         self, saver_id: str | None = None

@@ -5,7 +5,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
 from aideforge.abc import AbstractStorage, StructT
-from aideforge.structs import (
+from aideforge.structs.abc import (
     BaseStruct,
     BaseIncrementalStruct,
     BaseEvent,

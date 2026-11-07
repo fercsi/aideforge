@@ -6,7 +6,6 @@ import asyncio
 # import io
 import os
 import warnings
-
 # from contextlib import redirect_stderr
 from threading import Lock
 from typing import Any, AsyncGenerator, Awaitable, Callable
@@ -36,7 +35,6 @@ from langchain.agents.middleware import (
     ModelResponse,
     before_model,
 )
-
 # from langchain.agents.middleware.types import awrap_model_call
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.messages import (
@@ -50,18 +48,16 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime as LangGraphRuntime
 from langgraph.types import Command as LangGraphCommand
 
-from aideforge.abc import AbstractAgentRuntime, AbstractStorage
+from aideforge.abc.callback import AgentCallbackHandler
+from aideforge.abc.agent_runtime import AbstractAgentRuntime
+from aideforge.abc.storage import AbstractStorage
+from aideforge.agent.types import ActionRequest, AgentSetup, ApprovalDecision
 from aideforge.results import LlmError, LlmResponse, InternalError
-from aideforge.structs import (
-    AgentConfig,
-    AgentState,
-    ContextConfig,
-    ContextInfo,
-    LlmConfig,
-)
+from aideforge.structs.agent import AgentConfig, ContextConfig, ContextInfo
+from aideforge.structs.llm import LlmConfig
+from aideforge.structs.session import AgentState
 from aideforge.tools import ToolPolicy
 from aideforge.utils import create_id
-from .types import ActionRequest, AgentSetup, ApprovalDecision, Callbacks, LangChainCallbacks
 
 
 __all__ = ["AgentRuntime"]
@@ -90,7 +86,8 @@ class AgentRuntime(AbstractAgentRuntime):
             Storage backend for retrieving content resources. If ``None``,
             resources can be implemented only with their inline content.
         """
-        self._setup = setup.model_copy(deep=True)
+        #self._setup = setup.model_copy(deep=True) some fields cannot be copied
+        self._setup = setup
         self._config = config.model_copy(deep=True)
 
         self._agent_id = setup.agent_id
@@ -116,7 +113,6 @@ class AgentRuntime(AbstractAgentRuntime):
         )
 
         self.change_llm(setup.llm_config)
-        self.update_callbacks(setup.callbacks)
 
         self._storage = storage
         if storage:
@@ -153,6 +149,7 @@ class AgentRuntime(AbstractAgentRuntime):
         prompt: str,
         *,
         thread_idx: int = 0,
+        callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None,
     ) -> Generator[ActionRequest, ApprovalDecision, LlmResponse | LlmError]:
         raise NotImplementedError(
             "Synchron version of prompt processor is not implemented, yet"
@@ -163,6 +160,7 @@ class AgentRuntime(AbstractAgentRuntime):
         prompt: str,
         *,
         thread_idx: int = 0,
+        callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None,
     ) -> AsyncGenerator[
         ActionRequest | LlmResponse | LlmError, ApprovalDecision
     ]:
@@ -182,9 +180,10 @@ class AgentRuntime(AbstractAgentRuntime):
             config = {
                 "configurable": {"thread_id": str(thread_id)},
             }
-            if self._callbacks:
-                config["callbacks"] = self._callbacks
-            print(self._callbacks)
+            if callbacks:
+                if not isinstance(callbacks, list):
+                    callbacks = [callbacks]
+                config["callbacks"] = callbacks
             state = await self._agent.aget_state(config)
             prev_msg_cnt = (
                 len(state.values["messages"])
@@ -282,8 +281,8 @@ class AgentRuntime(AbstractAgentRuntime):
                 err_msg = exc.body["error"].get("message", str(exc))
             else:
                 err_msg = str(exc)
-#>            yield LlmError(error_message=err_msg)
-            yield InternalError.from_exception(exc)
+            yield LlmError(error_message=err_msg)
+            #yield InternalError.from_exception(exc)
 
     def change_llm(self, llm_config: LlmConfig) -> None:
         if hasattr(self, "llm_config"):
@@ -305,16 +304,6 @@ class AgentRuntime(AbstractAgentRuntime):
             if policy == ToolPolicy.INHERIT:
                 policy = ToolPolicy.ASK  # global default is hard coded!
         self._tool_policy[tool_name] = policy
-
-    def update_callbacks(self, callbacks: Callbacks) -> None:
-        if isinstance(callbacks, LangChainCallbacks):
-            self._callbacks = callbacks.llm
-        else:
-            self._callbacks = None
-        if isinstance(callbacks, Callbacks):
-            self._warning_callback = callbacks.warning
-        else:
-            self._warning_callback = None
 
     def _init_context_config(self) -> None:
         """Resolve and validate the context configuration for the agent.
@@ -442,17 +431,6 @@ class AgentRuntime(AbstractAgentRuntime):
         # awrap_model_call does not work in LangGraph
         model = self._llmodel
         return await handler(request.override(model=model))
-
-    def _warning(self, message: str) -> None:
-        """Send a warning message to the warning callback if set.
-
-        Parameters
-        ----------
-        message : str
-            The warning message to send.
-        """
-        if self._warning_callback:
-            self._warning_callback(message)
 
 
 def _get_model_instance(llm: LlmConfig) -> BaseChatModel:

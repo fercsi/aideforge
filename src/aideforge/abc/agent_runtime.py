@@ -6,17 +6,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import AsyncGenerator, Generator
 
-    from aideforge.abc import AbstractStorage
+    from aideforge.abc.callback import AgentCallbackHandler
+    from aideforge.abc.storage import AbstractStorage
     from aideforge.results import LlmError, LlmResponse
-    from aideforge.structs import (
-        AgentConfig,
-        AgentState,
-        ActionRequest,
-        ApprovalDecision,
-        LlmConfig,
-        Callbacks,
-    )
-    from aideforege.tools import ToolPolicy
+    from aideforge.structs.agent import AgentConfig
+    from aideforge.structs.llm import LlmConfig
+    from aideforge.structs.session import AgentState
+    from aideforge.tools import ToolPolicy
+    from .types import ActionRequest, ApprovalDecision
 
 __all__ = [
     "AbstractAgentRuntime",
@@ -231,8 +228,4 @@ class AbstractAgentRuntime(ABC):
         ValueError
             If the agent does not have a tool with the given name.
         """
-        pass
-
-    @abstractmethod
-    def update_callbacks(self, callbacks: Callbacks) -> None:
         pass

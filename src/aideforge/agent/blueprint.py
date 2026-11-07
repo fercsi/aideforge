@@ -9,12 +9,15 @@ from langchain.tools import BaseTool
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tools import StructuredTool
 
-from aideforge.abc import AbstractAgentBlueprint, AbstractStorage
-from aideforge.structs import AgentConfig, AgentState, Content, LlmConfig
+from aideforge.abc.agent_blueprint import AbstractAgentBlueprint
+from aideforge.abc.storage import AbstractStorage
+from aideforge.agent.runtime import AgentRuntime
+from aideforge.agent.types import AgentSetup
+from aideforge.structs.agent import AgentConfig, Content
+from aideforge.structs.llm import LlmConfig
+from aideforge.structs.session import AgentState
 from aideforge.tools import PreconfiguredTool, ToolType
 from aideforge.utils import IdType, create_id, deep_merge
-from .runtime import AgentRuntime
-from .types import AgentSetup
 
 __all__ = ["AgentBlueprint"]
 
@@ -27,10 +30,6 @@ class AgentBlueprint(AbstractAgentBlueprint):
         *,
         tool_pool: list[ToolType] | None = None,
         storage: AbstractStorage | None = None,
-        callbacks: BaseCallbackHandler
-        | list[BaseCallbackHandler]
-        | None = None,
-        warning_callback: Callable[str, None] | None = None,
     ) -> None:
         if config is None:
             self._config = AgentConfig()
@@ -58,9 +57,6 @@ class AgentBlueprint(AbstractAgentBlueprint):
 
         self._storage = storage
 
-        self._callbacks = callbacks
-        self._warning_callback = warning_callback
-
     def instantiate(
         self,
         *,
@@ -75,7 +71,6 @@ class AgentBlueprint(AbstractAgentBlueprint):
             tools=tools,
             system_message=self._create_system_message(),
             interrupt_on=self._create_interrupt_on(tools),
-            callbacks=self._callbacks,
         )
         return AgentRuntime(
             setup=setup, config=self._config, storage=self._storage
@@ -96,17 +91,10 @@ class AgentBlueprint(AbstractAgentBlueprint):
             tool_policy=state.tool_policy,
             system_message=self._create_system_message(),
             interrupt_on=self._create_interrupt_on(tools),
-            callbacks=self._callbacks,
         )
         return AgentRuntime(
             setup=setup, config=self._config, storage=self._storage
         )
-
-    def update_callbacks(
-        self, callbacks: BaseCallbackHandler | list[BaseCallbackHandler]
-    ) -> None:
-        callbacks = callbacks if isinstance(callbacks, list) else [callbacks]
-        self._callbacks = callbacks
 
     # PRIVATE METHODS
 
@@ -169,10 +157,10 @@ class AgentBlueprint(AbstractAgentBlueprint):
             tool_type = cfg.type or name
             tool = self._tools.get(tool_type)
             if tool is None:
-                self._warning(
-                    f"Agent wants to use tool '{tool_type}' but tool "
-                    "does not exist."
-                )
+                # self._warning(
+                #     f"Agent wants to use tool '{tool_type}' but tool "
+                #     "does not exist."
+                # )
                 # TODO: collect issues without failing
                 continue
             cfg_config = None
@@ -313,14 +301,3 @@ class AgentBlueprint(AbstractAgentBlueprint):
         # cannot use self._config.tools, because some may fail while createing
         # runtime tools. So use runtime tool set instead
         return {t.name: deepcopy(config) for t in tools}
-
-    def _warning(self, message: str) -> None:
-        """Send a warning message to the warning callback if set.
-
-        Parameters
-        ----------
-        message : str
-            The warning message to send.
-        """
-        if self._warning_callback:
-            self._warning_callback(message)

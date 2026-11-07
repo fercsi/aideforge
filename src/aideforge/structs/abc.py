@@ -60,6 +60,7 @@ class BaseStruct(BaseModel):
     storage_name: ClassVar[str] = "{struct.kind}"
     storage_mode: ClassVar[Literal["snapshot", "incremental"]] = "snapshot"
     kinds: ClassVar[str | None] = None
+    type_fields: ClassVar[list[str]] = ["kind", "version"]
 
     @property
     def created_at(self) -> datetime:

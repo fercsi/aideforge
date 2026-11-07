@@ -1,8 +1,11 @@
 # TODO: failures in prompt/command might prevent session storage
 import re
 import shlex
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime
+from functools import partial
+from types import MappingProxyType
 from typing import (
     Annotated,
     Any,
@@ -12,37 +15,29 @@ from typing import (
     TypeAlias,
 )
 
+
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import Field
 
-from .agent import (
-    ActionRequest,
-    AgentBlueprint,
-    AgentRuntime,
-    ApprovalDecision,
-    Callbacks,
+from aideforge.abc.assistant import AbstractAssistant, TemplateResolver
+from aideforge.abc.callback import AgentCallbackHandler
+from aideforge.abc.storage import AbstractStorage
+from aideforge.agent.blueprint import AgentBlueprint
+from aideforge.agent.runtime import AgentRuntime
+from aideforge.agent.types import ActionRequest, ApprovalDecision
+from aideforge.commands import BaseCommand, CommandExecutor, default_commands
+from aideforge.results import (
+    CommandError, CommandSuccess, LlmError, LlmResponse, PromptError, PromptResult,
 )
-from .commands import (
-    BaseCommand,
-    CommandExecutor,
-    default_commands,
-)
-from .abc import AbstractStorage
-from .results import CommandError, CommandSuccess, LlmError, LlmResponse
-from .storage import MemoryStorage
-from .structs import (
-    AgentConfig,
-    AssistantSettings,
-    BaseSettings,
-    LlmConfig,
-    SessionState,
-    Theme,
-)
-from .structs.settings import get_settings_type, validate_settings
-from .structs.theme import theme_collection
-from .tools import ToolType
+from aideforge.storage import MemoryStorage
+from aideforge.structs.agent import AgentConfig
+from aideforge.structs.llm import LlmConfig
+from aideforge.structs.session import SessionState
+from aideforge.structs.settings import AssistantSettings, BaseSettings, SettingsGroup, get_settings_type, validate_settings
+from aideforge.structs.theme import Theme, theme_collection
+from aideforge.tools import ToolType
 
-__all__ = ["Assistant", "PromptError", "PromptResult", "PSEvalExtender"]
+__all__ = ["Assistant"]
 
 DEFAULT_DESCRIPTION = (
     "I’m a versatile AI assistant that can leverage multiple specialized "
@@ -51,41 +46,6 @@ DEFAULT_DESCRIPTION = (
     "practical results."
 )
 
-PromptError = Annotated[
-    CommandError | LlmError, Field(descriminator="error_code")
-]
-
-PromptResult = Annotated[
-    LlmResponse | CommandSuccess | PromptError, Field(descriminator="status")
-]
-
-
-#: PSEvalExtender contract.
-#:
-#: Function contract for processing additional variables during prompt
-#: string evaluation.
-#:
-#: WARNING: This function must not raise exceptions when a variable or
-#: formatting option is unsupported. It must return ``None`` instead.
-#:
-#: Signature
-#: ---------
-#: ``(var: str, fmt: str) -> str | None``
-#:
-#: Parameters
-#: ----------
-#: var : str
-#:     Template variable name.
-#: fmt : str
-#:     Template variable formatting option. Empty string (``""``) if omitted.
-#:
-#: Returns
-#: -------
-#: str or None
-#:     The string value to substitute for the variable placeholder.
-#:     Returns ``None`` if the variable or formatting option is unsupported,
-#:     instead of raising an exception.
-PSEvalExtender: TypeAlias = Callable[[str, str], str | None]
 
 AssistantSettingsInputType = (
     BaseSettings | dict[str, Any] | list[BaseSettings | dict[str, Any]]
@@ -95,7 +55,7 @@ AssistantAgentsInputType = list[
 ]
 
 
-class Assistant:
+class Assistant(AbstractAssistant, TemplateResolver):
     """AI agent and chat manager.
 
     Manages agent blueprints, model configuration, command execution, and
@@ -115,38 +75,33 @@ class Assistant:
         agents: AssistantAgentsInputType | None = None,
         tool_pool: list[ToolType] | None = None,
         llm: LlmConfig | dict[str, Any] | None = None,
-        callbacks: Callbacks | None = None,
         commands: list[type[BaseCommand]] | None = None,
         description: str = DEFAULT_DESCRIPTION,
     ):
         storage = storage or MemoryStorage()
-        self.storage = storage
+        self._storage = storage
 
         # Setup overall settings
+        self._settings = SettingsGroup(storage=storage)
         if default_settings is None:
             default_settings = [AssistantSettings()]
         elif not isinstance(default_settings, list):
             default_settings = [default_settings]
-        self._settings = {}
         for settings in default_settings:
             if isinstance(settings, dict):
-                if "scope" not in settings:
-                    settings["scope"] = "assistant"
-                settings = validate_settings(settings)
-            if settings.scope in self._settings:
-                raise ValueError(
-                    f"Multiple settings has been given with the same scope: '{settings.scope}'"
-                )
-            self._settings[settings.scope] = settings
-        if "assistant" not in self._settings:
-            self._settings["assistant"] = AssistantSettings()
+                if "domain" not in settings:
+                    settings["domain"] = "assistant"
+            self._settings.register(settings)
+        if not self._settings.has_domain("assistant"):
+            self._settings.register(AssistantSettings())
         stored_settings = storage.list_structs(BaseSettings)
         for name in stored_settings:
             settings_type = get_settings_type(name)
             # TODO: Solve merging structs. difficulty: unchangesd fields
             # are enumerated and will not be able to merge.
             # So now, simply overwrite
-            self._settings[name] = storage.load_struct(settings_type, name)
+            settings = storage.retrieve_struct(settings_type, name)
+            self._settings.register(settings, override=True)
 
         # Setup initial agent blueprints
         agent_blueprints: list[
@@ -179,36 +134,44 @@ class Assistant:
             self.agent_blueprints[name] = blueprint
         self._agents = {}  # TODO name/ID
 
-        self.session = None
+        self._session = None
         self._stored_input_count = 0
         self.change_session(session)
 
         self._tool_pool = tool_pool
 
         # Further setup
-        llm = llm or self._settings["assistant"].llm
+        llm = llm or self._settings.get("llm")
         if isinstance(llm, dict):
             llm = LlmConfig.model_validate(llm)
         elif isinstance(llm, LlmConfig):
             llm = llm.model_copy(deep=True)
         self._current_llm = llm
-        self._callbacks = callbacks
-        if callbacks:
-            self.update_callbacks(callbacks)
-        self._warning_callback = callbacks and callbacks.warning
 
         self.command_executor = CommandExecutor(self)
         commands = (commands if commands is not None else []) + default_commands
         self.register_commands(commands)
 
-        self.description = description
+        self._description = description
         self._themes = theme_collection.copy()
 
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def settings(self) -> SettingsGroup:
+        return self._settings
+
+    @property
+    def storage(self) -> AbstractStorage:
+        return self._storage
+
     def prepare(self) -> None:
-        self.storage.prepare()
+        self._storage.prepare()
 
     async def aprepare(self) -> None:
-        await self.storage.aprepare()
+        await self._storage.aprepare()
 
     def cleanup(self) -> None:
         """
@@ -223,68 +186,20 @@ class Assistant:
         ...     assistant.shutdown()
         """
         self._store_session()
-        self.storage.cleanup
+        self._storage.cleanup
 
     async def acleanup(self) -> None:
         self._store_session()
-        await self.storage.acleanup()
+        await self._storage.acleanup()
 
-    def change_session(
-        self, session: SessionState | dict[str, Any] | str | None = None
-    ) -> None:
-        # TODO: if inputs
-        self._store_session()
-        if session is None:
-            self.session = SessionState()
-        elif isinstance(session, str):  # session_id
-            self.session = self.storage.retrieve_struct(SessionState, session)
-        else:
-            self.session = SessionState.model_validate(session)
 
-        self._stored_input_count = self.session.input_count
-        current_agent_name = None
-        current_agent_id = self.session.current_agent
-        for agent_id, agent_state in self.session.agents.items():
-            # agent restoration is also lazy
-            name = agent_state.config.name
-            self.agent_blueprints[name] = (agent_id, agent_state)
-            if current_agent_id == agent_id:
-                current_agent_name = name
-                # currently agents are stored by name internally to handle
-                # it easier from user PoV
-        if current_agent_name is not None:
-            self.current_agent_name = current_agent_name
-        else:
-            self.current_agent_name = next(iter(self.agent_blueprints), None)
-
-        # TODO: if self.session.current_agent:
-        # self.current_agent_name = default_agent or agent_blueprints[0].name
-        # self._current_agent = None
-
-    def update_callbacks(self, callbacks: Callbacks) -> None:
-        """Register or extend callback handlers for LLM/tool execution.
-
-        Callbacks are stored in the prompt configuration and applied to
-        every LLM call. If callbacks were already set, new handlers are
-        appended to the existing list.
-
-        Parameters
-        ----------
-        callbacks : BaseCallbackHandler or list[BaseCallbackHandler]
-            One or more callback handlers to register.
-        """
-        # TODO merge with old?! Wit a parameter merge=False
-        self._callbacks = callbacks
-        self._warning_callback = callbacks and callbacks.warning
-        for agent in self._agents.values():
-            agent.update_callbacks(callbacks)
-        for blueprint in self.agent_blueprints.values():
-            if isinstance(blueprint, AgentBlueprint):
-                blueprint.update_callbacks(callbacks)
+    # Prompt processing
 
     def prompt_processor(
         self,
         prompt: str,
+        *,
+        callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None
     ) -> Generator[ActionRequest, ApprovalDecision, PromptResult]:
         """
         >>> processor = assistant.prompt_processor("List me the python files")
@@ -299,19 +214,21 @@ class Assistant:
         """
 
         prompt = prompt.strip()
-        self.session.input_count += 1
-        self.session.history.append(prompt)
+        self._session.input_count += 1
+        self._session.history.append(prompt)
         if prompt.startswith("/"):
             return self._process_command(prompt)
 
         agent = self._get_current_agent()
-        response = yield from agent.prompt_processor(prompt)
+        response = yield from agent.prompt_processor(prompt, callbacks=callbacks)
         self._store_session()
         return response
 
     async def aprompt_processor(
         self,
         prompt: str,
+        *,
+        callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None
     ) -> AsyncGenerator[ActionRequest | PromptResult, ApprovalDecision]:
         """Process a user prompt and return the result.
 
@@ -340,14 +257,14 @@ class Assistant:
         >>> # process response message or error
         """
         prompt = prompt.strip()
-        self.session.input_count += 1
-        self.session.history.append(prompt)
+        self._session.input_count += 1
+        self._session.history.append(prompt)
         if prompt.startswith("/"):
             yield self._process_command(prompt)
             return
 
         agent = self._get_current_agent()
-        processor = agent.aprompt_processor(prompt)
+        processor = agent.aprompt_processor(prompt, callbacks=callbacks)
         try:
             response = await anext(processor)
             while True:
@@ -357,6 +274,64 @@ class Assistant:
                 response = await processor.asend(decision)
         finally:
             await processor.aclose()
+
+    # Session management
+
+    @property
+    def session(self) -> SessionState:
+        return self._session
+
+
+    def change_session(
+        self, session: SessionState | dict[str, Any] | str | None = None
+    ) -> None:
+        # TODO: if inputs
+        self._store_session()
+        if session is None:
+            self._session = SessionState()
+        elif isinstance(session, str):  # session_id
+            self._session = self._storage.retrieve_struct(SessionState, session)
+        else:
+            self._session = SessionState.model_validate(session)
+
+        self._stored_input_count = self._session.input_count
+        current_agent_name = None
+        current_agent_id = self._session.current_agent
+        for agent_id, agent_state in self._session.agents.items():
+            # agent restoration is also lazy
+            name = agent_state.config.name
+            self.agent_blueprints[name] = (agent_id, agent_state)
+            if current_agent_id == agent_id:
+                current_agent_name = name
+                # currently agents are stored by name internally to handle
+                # it easier from user PoV
+        if current_agent_name is not None:
+            self.current_agent_name = current_agent_name
+        else:
+            self.current_agent_name = next(iter(self.agent_blueprints), None)
+
+        # TODO: if self._session.current_agent:
+        # self.current_agent_name = default_agent or agent_blueprints[0].name
+        # self._current_agent = None
+
+    # Agent management
+
+    @property
+    def available_agents(self) -> list[str]:
+        return list(self.agent_blueprints)
+
+    @property
+    def current_agent(self) -> AgentRuntime:
+        return self._get_current_agent()
+
+    def change_agent(self, agent: str) -> None:
+        self.current_agent_name = agent
+
+    # Command management
+
+    @property
+    def commands(self) -> Mapping[str, BaseCommand]:
+        return MappingProxyType(self._command_executor.commands)
 
     def register_commands(self, commands: list[type[BaseCommand]]) -> None:
         """Register assistant commands
@@ -370,8 +345,11 @@ class Assistant:
         for command in commands:
             self.command_executor.register_command(command)
 
-    def eval_prompt_string(
-        self, template: str, extender: PSEvalExtender | None = None
+
+    # Miscellaneous functions
+
+    def render_template(
+        self, template: str, *extensions: TemplateResolver
     ) -> str:
         """Evaluate a prompt string template with runtime values.
 
@@ -400,64 +378,42 @@ class Assistant:
         ValueError
             If an unknown placeholder variable is encountered.
         """
-        ps = template.replace("{{", "\0").replace("}}", "\1")
+        resolved = template.replace("{{", "\0").replace("}}", "\1")
 
-        ps = re.sub(
-            r"{([^{}]*)}",
-            lambda m: self._ps_replacer(m.group(1), extender),
-            ps,
-        )
+        resolver = partial(self._resolver, extensions + (self,))
+        resolved = re.sub(r"{([^{}]*)}", resolver, resolved)
 
-        return ps.replace("\0", "{").replace("\1", "}")
+        return resolved.replace("\0", "{").replace("\1", "}")
 
-    def get_settings(self, scope: str) -> BaseSettings | None:
-        return self._settings.get(scope)
-
-    def set_settings(self, settings: BaseSettings | dict[str, Any]) -> None:
-        # overwrite settings
-        if isinstance(settings, dict):
-            settings = validate_settings(settings)
-        self._settings[settings.scope] = settings
-
-    def ensure_settings(self, settings: BaseSettings | dict[str, Any]) -> None:
-        # set settings if not given
-        if isinstance(settings, dict):
-            settings = validate_settings(settings)
-        if settings.scope not in self._settings:
-            self._settings[settings.scope] = settings
-
-    def list_themes(self) -> list[str]:
-        theme_names = self._storage.list_structs(Theme)
-        names_set = set(self._themes.keys()) | {theme_names}
-        return list(sorted(names_set))
-
-    def get_theme(self, theme_name: str) -> Theme:
-        if theme_name in self._themes:
-            return self._themes[theme_name]
-        theme = self._storage.retrieve_struct(
-            Theme, theme_name, ignore_errors=True
-        )
-        if theme is None:
-            raise ValueError("Theme '{theme_name}' not found")
-        # TODO: if cached theme cannot be edited while using assistant
-        self._themes[theme_name] = theme
-        return theme
-
-    def get_welcome_message(self) -> str:
-        return self._get_current_agent().state.config.welcome_message
-
-    def get_commands(self) -> dict[str, BaseCommand]:
-        return self.command_executor.commands
-        # TODO: stronger coupling? -> get_command(str) + get_command_list?
+    def resolve(self, var: str, fmt: str) -> str | None:
+        # implementing TemplateResolver.resolve
+        return self._self_resolve(var, fmt)
 
     # PRIVATE METHODS
 
+    def _resolver(self, resolvers: list[TemplateResolver], match: re.Match[str]) -> str:
+        var = match.group(0)[1:-1]
+        fmt = ""
+        if ":" in var:
+            var, fmt = var.split(":", 1)
+        var = var.strip()
+        fmt = fmt.strip()
+
+        result = None
+        for resolver in resolvers:
+            result = resolver.resolve(var, fmt)
+            if result is not None:
+                return result
+        orfmt = f" or format '{fmt}'" if fmt else ""
+        raise ValueError(f"Unknown template variable '{var}'{orfmt}.")
+        
+
     def _store_session(self) -> None:
-        if self.session is None:
+        if self._session is None:
             return
-        if self.session.input_count > self._stored_input_count:
-            self.storage.store_struct(self.session)
-        self._stored_input_count = self.session.input_count
+        if self._session.input_count > self._stored_input_count:
+            self._storage.store_struct(self._session)
+        self._stored_input_count = self._session.input_count
 
     def _get_current_agent(self) -> AgentRuntime:
         """Retrieve or lazily instantiate the current agent runtime.
@@ -491,15 +447,14 @@ class Assistant:
                 blueprint = agent_state.config
 
             if isinstance(blueprint, str):  # struct name in store
-                blueprint = self.storage.retrieve_struct(AgentConfig, blueprint)
+                blueprint = self._storage.retrieve_struct(AgentConfig, blueprint)
             if isinstance(blueprint, dict):
                 blueprint = AgentConfig.model_validate(blueprint)
             if isinstance(blueprint, AgentConfig):
                 blueprint = AgentBlueprint(
                     config=blueprint,
                     tool_pool=self._tool_pool,
-                    storage=self.storage,
-                    callbacks=self._callbacks,
+                    storage=self._storage,
                 )
                 self.agent_blueprints[name] = blueprint
 
@@ -511,7 +466,7 @@ class Assistant:
             self._current_llm = agent.state.llm
             self._agents[name] = agent
             # Add runtime state to session (even if previously we had one there)
-            self.session.agents[agent_id] = agent.state
+            self._session.agents[agent_id] = agent.state
             self._store_session()
         return self._agents[name]
 
@@ -541,9 +496,7 @@ class Assistant:
         self._store_session()
         return result
 
-    def _ps_replacer(
-        self, var: str, extender: Callable[[str, str], str | None] | None = None
-    ) -> str:
+    def _self_resolve(self, var: str, fmt: str) -> str | None:
         """Replace a single prompt-string placeholder variable.
 
         For supported variables, see :meth:`eval_prompt_string`
@@ -583,22 +536,12 @@ class Assistant:
         #                   "i"/"o"/"t"/"r" - input, output (default), total, reasoning tokens
         #                   "a"/"b"/"k" - auto, byte, kbyte size
         # {session_id}      SessionState ID
-        fmt = ""
-        if ":" in var:
-            var, fmt = var.split(":", 1)
-        var = var.strip()
-        fmt = fmt.strip()
-
-        if extender is not None:
-            result = extender(var, fmt)
-            if result is not None:
-                return result
 
         # Session specific info
         if var == "session_id" and fmt == "":
-            return str(self.session.session_id)
+            return str(self._session.session_id)
         if var == "sn" and fmt == "":
-            return str(self.session.input_count + 1)
+            return str(self._session.input_count + 1)
 
         # Agent specific info
         if var == "agent" and fmt == "":
@@ -659,7 +602,7 @@ class Assistant:
             elif fmt in ("ymd", ""):
                 return datetime.now().strftime("%Y-%m-%d")
         orfmt = f" or format '{fmt}'" if fmt else ""
-        raise ValueError(f"Unknown prompt string variable '{var}'{orfmt}.")
+#>        raise ValueError(f"Unknown prompt string variable '{var}'{orfmt}.")
 
     def stop_processing(self) -> None:
         """Stop any ongoing prompt processing.

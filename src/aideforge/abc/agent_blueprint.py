@@ -4,13 +4,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aideforge.abc import AbstractStorage
-    from aideforge.structs import (
-        AgentConfig,
-        AgentState,
-        LlmConfig,
-        Callbacks,
-    )
+    from aideforge.abc.callback import AgentCallbackHandler
+    from aideforge.abc.storage import AbstractStorage
+    from aideforge.structs.agent import AgentConfig
+    from aideforge.structs.llm import LlmConfig
+    from aideforge.structs.session import AgentConfig
 
 __all__ = [
     "AbstractAgentBlueprint",
@@ -52,7 +50,6 @@ class AbstractAgentBlueprint(ABC):
         *,
         tool_pool: list[ToolType] | None = None,
         storage: AbstractStorage | None = None,
-        callbacks: Callbacks | None = None,
     ) -> None:
         """Initialize an :class:`AgentBlueprint` instance.
 
@@ -71,8 +68,6 @@ class AbstractAgentBlueprint(ABC):
         storage : AbstractStorage or None, optional
             Storage backend for retrieving content resources. If ``None``,
             resources can be implemented only with their inline content.
-        callbacks : Callbacks or None, optional
-            One or more callback handlers to run during agent operation.
 
         Raises
         ------
@@ -163,8 +158,4 @@ class AbstractAgentBlueprint(ABC):
             If a tool is invalid, or if context configuration exceeds model
             limits.
         """
-        pass
-
-    @abstractmethod
-    def update_callbacks(self, callbacks: Callbacks) -> None:
         pass

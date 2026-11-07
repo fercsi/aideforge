@@ -22,7 +22,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 import sqlite3
 
 from aideforge.abc import AbstractStorage, StructT
-from aideforge.structs import (
+from aideforge.structs.abc import (
     BaseStruct,
     BaseIncrementalStruct,
     BaseEvent,

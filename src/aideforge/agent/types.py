@@ -7,8 +7,7 @@ from langchain.tools import BaseTool
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel, ConfigDict, Field
 
-
-from aideforge.structs import LlmConfig
+from aideforge.structs.llm import LlmConfig
 from aideforge.tools import ToolPolicy
 from aideforge.utils import IdType
 
@@ -16,32 +15,7 @@ __all__ = [
     "AgentSetup",
     "ActionRequest",
     "ApprovalDecision",
-    "Callbacks",
-    "LangChainCallbacks",
 ]
-
-@dataclass
-class Callbacks:
-    debug: Callable[[str], None] | None = Field(
-        default=None,
-        description="Callback to use when some debug info should be sent to the interface",
-    )
-    info: Callable[[str], None] | None = Field(
-        default=None,
-        description="Callback to use when some info should be sent to the interface",
-    )
-    warning: Callable[[str], None] | None = Field(
-        default=None,
-        description="Callback to use when a warning should be sent to the interface",
-    )
-
-
-@dataclass
-class LangChainCallbacks(Callbacks):
-    llm: list[BaseCallbackHandler] = Field(
-        default_factory=list, description="Callback handlers used by LangChain"
-    )
-
 
 class ActionRequest(BaseModel):
     """Represents a request to invoke a tool, pending human approval.
@@ -115,8 +89,6 @@ class AgentSetup(BaseModel):
         Configuration on which tools should be interrupted.
     threads: list[IdType] | None
         List of thread IDs for agent restoration.",
-    callbacks : Callbacks or None, optional
-        Callback handler to run on various points of the operation.
     """
 
     # This is needed to store callback handler, and other callbacks
@@ -153,10 +125,4 @@ class AgentSetup(BaseModel):
     threads: list[IdType] | None = Field(
         default=None,
         description="List if thread IDs for agent restoration.",
-    )
-    callbacks: Callbacks | None = Field(
-        default=None,
-        description=(
-            "Callback handler to run on various points of the operation.",
-        ),
     )
