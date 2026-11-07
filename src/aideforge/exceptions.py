@@ -1,0 +1,2 @@
+class DuplicateKeyError(ValueError):
+    """Raised when attempting to add an already existing key."""
