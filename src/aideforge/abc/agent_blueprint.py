@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from aideforge.abc.agent_runtime import AbstractAgentRuntime
     from aideforge.abc.callback import AgentCallbackHandler
     from aideforge.abc.storage import AbstractStorage
     from aideforge.structs.agent import AgentConfig
     from aideforge.structs.llm import LlmConfig
-    from aideforge.structs.session import AgentConfig
+    from aideforge.structs.session import AgentState
+    from aideforge.utils import IdType
+    from aideforge.tools import ToolBlueprintType
 
 __all__ = [
     "AbstractAgentBlueprint",
@@ -22,16 +25,15 @@ class AbstractAgentBlueprint(ABC):
     configuration, and resources. Instances are templates used to create
     :class:`AgentRuntime` objects via the :meth:`instantiate` method.
 
-
     Parameters
     ----------
-    config : AgentConfig | dict[str, Any] | None, optional
+    config : AgentConfig, dict[str, Any] or None, optional
         The agent configuration. May be an :class:`AgentConfig`
         instance, a dictionary to validate, or ``None`` to use defaults.
-    tool_pool : list[ToolType] or None, optional
-        A list of tools available to the agent. Each entry may be a
-        :class:`BaseTool` subclass, a :class:`PreconfiguredTool`, or a
-        callable. If ``None``, no tools are available.
+    tool_pool : list[ToolBlueprintType] or None, optional
+        A list of tools (tool blueprints) available to the agent. For the
+        avaliable tool blueprint formats see :tool:`ToolBlueprintType`.
+        If ``None``, no tools are available.
     storage : AbstractStorage or None, optional
         Storage backend for retrieving content resources. If ``None``,
         resources can be implemented only with their inline content.
@@ -41,30 +43,27 @@ class AbstractAgentBlueprint(ABC):
     name : str
         The agent's name, used for identification and lookup.
     config : AgentConfig
-        See above
+        The agent configuration.
     """
 
     def __init__(
         self,
         config: AgentConfig | dict[str, Any] | None = None,
         *,
-        tool_pool: list[ToolType] | None = None,
+        tool_pool: list[ToolBlueprintType] | None = None,
         storage: AbstractStorage | None = None,
     ) -> None:
-        """Initialize an :class:`AgentBlueprint` instance.
-
-        Creates copies of mutable class attributes so that each instance
-        has its own independent tools and resources lists.
+        """Initialize an :class:`AbstractAgentBlueprint` instance.
 
         Parameters
         ----------
-        config : AgentConfig | dict[str, Any] | None, optional
+        config : AgentConfig, dict[str, Any] or None, optional
             The agent configuration. May be an :class:`AgentConfig`
             instance, a dictionary to validate, or ``None`` to use defaults.
-        tool_pool : list[ToolType] or None, optional
-            A list of tools available to the agent. Each entry may be a
-            :class:`BaseTool` subclass, a :class:`PreconfiguredTool`, or a
-            callable. If ``None``, no tools are available.
+        tool_pool : list[ToolBlueprintType] or None, optional
+            A list of tools (tool blueprints) available to the agent. For the
+            avaliable tool blueprint formats see :tool:`ToolBlueprintType`.
+            If ``None``, no tools are available.
         storage : AbstractStorage or None, optional
             Storage backend for retrieving content resources. If ``None``,
             resources can be implemented only with their inline content.
@@ -78,7 +77,6 @@ class AbstractAgentBlueprint(ABC):
         self._config = config
         self._tool_pool = tool_pool
         self._storage = storage
-        sekf._callbacks = callbacks
 
     @property
     def name(self) -> str:
@@ -87,7 +85,7 @@ class AbstractAgentBlueprint(ABC):
 
     @property
     def config(self) -> AgentConfig:
-        """Agent's onfiguration."""
+        """Agent's configuration."""
         return self._config
 
     @abstractmethod
@@ -96,7 +94,7 @@ class AbstractAgentBlueprint(ABC):
         *,
         llm: LlmConfig | None = None,
         force_llm: bool = False,
-    ) -> AgentRuntime:
+    ) -> AbstractAgentRuntime:
         """Create an :class:`AgentRuntime` from this agent's configuration.
 
         Resolves the model, tools, context config, and system message,
@@ -104,18 +102,18 @@ class AbstractAgentBlueprint(ABC):
 
         Parameters
         ----------
-        llm : LlmConfig | None, optional
+        llm : LlmConfig or None, optional
             If no model is configured in the agent blueprint, it must be
-            specified here. By default, the agent's own model is used, but
-            if ``force_llm`` is ``True``, this parameter overrides the
-            agent's defaults.
+            specified here. By default, the agent's own model is used.
+            If ``force_llm`` is ``True``, this parameter overrides the
+            agent's default model.
         force_llm : bool, optional
             If ``True``, the provided *llm* overrides the agent's default
             model, by default ``False``.
 
         Returns
         -------
-        AgentRuntime
+        AbstractAgentRuntime
             A runtime instance configured with the resolved model, tools,
             system message, and context config.
 
@@ -128,14 +126,14 @@ class AbstractAgentBlueprint(ABC):
             If a tool is invalid, or if context configuration exceeds model
             limits.
         """
-        pass
+        ...
 
     @abstractmethod
     def restore(
         self,
         agent_id: IdType,
         state: AgentState,
-    ) -> AgentRuntime:
+    ) -> AbstractAgentRuntime:
         """Create an :class:`AgentRuntime` from this agent's configuration.
 
         Resolves the model, tools, context config, and system message,
@@ -144,11 +142,13 @@ class AbstractAgentBlueprint(ABC):
         Parameters
         ----------
         agent_id : IdType
+            Unique identifier for the agent.
         state : AgentState
+            The agent state to restore.
 
         Returns
         -------
-        AgentRuntime
+        AbstractAgentRuntime
             A runtime instance configured with the resolved model, tools,
             system message, and context config.
 
@@ -158,4 +158,4 @@ class AbstractAgentBlueprint(ABC):
             If a tool is invalid, or if context configuration exceeds model
             limits.
         """
-        pass
+        ...

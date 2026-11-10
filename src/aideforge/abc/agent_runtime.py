@@ -8,11 +8,13 @@ if TYPE_CHECKING:
 
     from aideforge.abc.callback import AgentCallbackHandler
     from aideforge.abc.storage import AbstractStorage
+    from aideforge.agent.types import AgentSetup
     from aideforge.results import LlmError, LlmResponse
     from aideforge.structs.agent import AgentConfig
     from aideforge.structs.llm import LlmConfig
     from aideforge.structs.session import AgentState
     from aideforge.tools import ToolPolicy
+    from aideforge.utils import IdType
     from .types import ActionRequest, ApprovalDecision
 
 __all__ = [
@@ -27,7 +29,7 @@ class AbstractAgentRuntime(ABC):
     which is a template that allows multiple identical agents to be created.
     The object stores all the information required for the agent's operation
     and provides an interface for communicating with the model
-    (:meth:`process_prompt`).
+    (:meth:`prompt_processor`).
 
     The input parameters are created by the agent blueprint in various forms
     and control the agent's behavior.
@@ -46,28 +48,18 @@ class AbstractAgentRuntime(ABC):
     config : AgentConfig
         The agent configuration template with tool policies, tools,
         system prompt, context, and LLM defaults.
-    llm_config : LlmConfig
-        Large language model's configuration data
-    tool_policy : dict[str, ToolPolicy]
-        Tool policy information for each tools
-    threads : list[IdType]
-        List of LangGraph thread IDs
+    storage : AbstractStorage or None, optional
+        Storage backend for retrieving content resources. If ``None``,
+        resources can be implemented only with their inline content.
 
     Properties
     ----------
     name : str
-        Name of the agent's type
+        Name of the agent's type.
     agent_id : IdType
-        Unique ID of agent
+        Unique ID of agent.
     state : AgentState
-        State information about the agent. Note, that LangChain
-    context_info : ContextInfo
-        Information on context. Rather limited at this point (contains
-        max_input_tokens and max_output_tokens)
-    setup : AgentSetup
-        See above
-    config : AgentConfig
-        See above
+        State information about the agent.
     """
 
     def __init__(
@@ -95,7 +87,6 @@ class AbstractAgentRuntime(ABC):
         self._config = config
         self._storage = storage
         self._agent_id = setup.agent_id
-        pass
 
     @property
     def name(self) -> str:
@@ -111,7 +102,7 @@ class AbstractAgentRuntime(ABC):
     @abstractmethod
     def state(self) -> AgentState:
         """Agent's current state."""
-        pass
+        ...
 
     @abstractmethod
     def prompt_processor(
@@ -119,16 +110,25 @@ class AbstractAgentRuntime(ABC):
         prompt: str,
         *,
         thread_idx: int = 0,
+        callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None,
     ) -> Generator[ActionRequest, ApprovalDecision, LlmResponse | LlmError]:
-        """Process a user prompt through the LLM agent in synchron mode.
+        """Create a processor to process a user prompt and return the result.
+
+        .. warning::
+           The method returns a Python *generator* that can request actions
+           from the user during processing by yielding them. The caller sends
+           the user's response back using ``send()``. The final result of
+           the processing is the generator's return value.
 
         Parameters
         ----------
         prompt : str
-            The user's input prompt text.
+            The user's input text.
         thread_idx : int, optional
             The index of the conversation thread to use, by default 0.
             If the thread does not exist yet, it is created automatically.
+        callbacks : AgentCallbackHandler, list[AgentCallbackHandler] or None, optional
+            Callback handler(s) for progress and debug information.
 
         Yields
         ------
@@ -139,24 +139,28 @@ class AbstractAgentRuntime(ABC):
 
         Returns
         -------
-        LlmResponse | LlmError
+        LlmResponse or LlmError
             ``LlmResponse`` is returned with the final LLM response content
             on success. ``LlmError`` is returned if an exception occurs during
             processing.
 
         Examples
         --------
-        >>> processor = assistant.prompt_processor("List me the python files")
+        >>> processor = agent.prompt_processor("List me the python files")
         >>> try:
-        ...   action_req = next(processor)
-        ...   while True:
-        ...     action = input(action_req.description + "\napprove/reject? ")
-        ...     action_req = processor.send(ApprovalDecision(action))
-        ... except StopIteration as exc
+        ...     action_req = next(processor)
+        ...     while True:
+        ...         action = input(action_req.description + "\napprove/reject? ")
+        ...         action_req = processor.send(
+        ...             ApprovalDecision.APPROVE
+        ...             if action == "approve"
+        ...             else ApprovalDecision.REJECT)
+        ...         )
+        ... except StopIteration as exc:
         ...     response = exc.value
         >>> # process response LLM message, command output or error
         """
-        pass
+        ...
 
     @abstractmethod
     async def aprompt_processor(
@@ -164,22 +168,33 @@ class AbstractAgentRuntime(ABC):
         prompt: str,
         *,
         thread_idx: int = 0,
+        callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None,
     ) -> AsyncGenerator[
         ActionRequest | LlmResponse | LlmError, ApprovalDecision
     ]:
-        """Process a user prompt through the LLM agent in asynchron mode.
+        """Create an asynchronous processor to process a user prompt and
+        return the result
+
+        .. warning::
+           The method returns a Python *generator* that can request actions
+           from the user during processing by yielding them. The caller sends
+           the user's response back using ``send()``. The final result of
+           the processing is also yielded (see also PEP525, "Specificaton",
+           "Asynchronous Generators")
 
         Parameters
         ----------
         prompt : str
-            The user's input prompt text.
+            The user's input text. Leading/trailing whitespace is stripped.
         thread_idx : int, optional
             The index of the conversation thread to use, by default 0.
             If the thread does not exist yet, it is created automatically.
+        callbacks : AgentCallbackHandler, list[AgentCallbackHandler] or None, optional
+            Callback handler(s) for progress and debug information.
 
         Yields
         ------
-        ActionRequest | LlmResponse | LlmError
+        ActionRequest, LlmResponse or LlmError
             ``ActionRequest`` instances are yielded when the agent needs
             human approval to invoke a tool; the caller must send an
             :class:`ApprovalDecision` via ``asend``. ``LlmResponse`` is
@@ -192,24 +207,32 @@ class AbstractAgentRuntime(ABC):
         >>> processor = agent.aprompt_processor("List me the python files")
         >>> response = await anext(processor)
         >>> while isinstance(response, ActionRequest):
-        ...   action = await async_input(response.description + "\napprove/reject? ")
-        ...   response = await processor.asend(ApprovalDecision(action))
-        >>> processor.aclose()
+        ...     action = await async_input(
+        ...         response.description + "\napprove/reject? "
+        ...     )
+        ...     response = await processor.asend(
+        ...         ApprovalDecision.APPROVE
+        ...         if action == "approve"
+        ...         else ApprovalDecision.REJECT
+        ...     )
+        >>> await processor.aclose()
         >>> # process response message or error
         """
+        ...
 
     @abstractmethod
     def change_llm(self, llm_config: LlmConfig) -> None:
         """Switch the underlying LLM and reinitialize the context config.
 
-        Note: Changing LLM during the session is not supported, yet.
+        .. note::
+           Changing LLM during the session is not supported, yet.
 
         Parameters
         ----------
         llm_config : LlmConfig
             The new LLM configuration to use for subsequent processing.
         """
-        pass
+        ...
 
     @abstractmethod
     def set_tool_policy(self, tool_name: str, policy: ToolPolicy) -> None:
@@ -228,4 +251,4 @@ class AbstractAgentRuntime(ABC):
         ValueError
             If the agent does not have a tool with the given name.
         """
-        pass
+        ...

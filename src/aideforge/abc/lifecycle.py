@@ -1,40 +1,44 @@
+import asyncio
 from abc import ABC, abstractmethod
+
+__all__ = [
+    "Lifecycle",
+]
 
 
 class Lifecycle(ABC):
-    """Lifecycle management interface
+    """Lifecycle management interface.
 
-    This interface ensures that classes implementing it have synchron and
-    asynchron lifecycle management feature including preparement and
+    This interface ensures that classes implementing it have synchronous and
+    asynchronous lifecycle management features including preparation and
     cleaning up operations.
 
-    NOTE: Every function has both a synchronous and an asynchronous version.
-    By default, each asynchronous version runs the corresponding synchronous
-    function in a separate thread using ``asyncio.to_thread()``. In many
-    cases, this is sufficient, and there is no need to implement a dedicated
-    asynchronous version.
+    .. note::
+       Every function has both a synchronous and an asynchronous version.
+       By default, each asynchronous version runs the corresponding synchronous
+       function in a separate thread using ``asyncio.to_thread()``. In many
+       cases, this is sufficient, and there is no need to implement a dedicated
+       asynchronous version.
     """
 
-    @abstractmethod
     def prepare(self) -> None:
-        """Prepare operation"""
+        """Prepare operation."""
         ...
 
     async def aprepare(self) -> None:
-        """Prepare operation
+        """Prepare operation.
 
-        This is the asynchron version of :meth:`prepare`.
+        This is the asynchronous version of :meth:`prepare`.
         """
         await asyncio.to_thread(self.prepare)
 
-    @abstractmethod
     def cleanup(self) -> None:
-        """Clean up operation"""
+        """Clean up operation."""
         ...
 
     async def acleanup(self) -> None:
-        """Clean up operation
+        """Clean up operation.
 
-        This is the asynchron version of :meth:`cleanup`.
+        This is the asynchronous version of :meth:`cleanup`.
         """
         await asyncio.to_thread(self.cleanup)

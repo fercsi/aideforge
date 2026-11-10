@@ -1,28 +1,45 @@
+import asyncio
 from abc import abstractmethod
-from typing import TypeVar
-
-from langgraph.checkpoint.base import BaseCheckpointSaver
+from typing import Protocol, TypeVar
 
 from aideforge.structs.abc import BaseStruct, BaseIncrementalStruct, BaseEvent
 from .lifecycle import Lifecycle
 
-__all__ = ["AbstractStorage", "StructT"]
+__all__ = ["AbstractStorage", "AgentCheckpointStoreProtocol", "StructT"]
 
 StructT = TypeVar("StructT", bound=BaseStruct)
+
+
+class AgentCheckpointStoreProtocol(Protocol):
+    """Protocol representing an agent checkpoint storage mechanism.
+
+    This protocol intentionally does not define any methods or attributes.
+    Different agent frameworks and runtimes may implement checkpointing
+    using fundamentally different interfaces and concepts. Defining a common
+    interface here would unnecessarily constrain integrations and introduce
+    framework-specific assumptions.
+
+    The protocol therefore serves as a semantic type marker, identifying
+    objects intended to provide checkpoint storage without imposing any
+    implementation requirements. Concrete integrations are responsible for
+    ensuring compatibility with the agent runtime that consumes them.
+    """
+    ...
 
 
 class AbstractStorage(Lifecycle):
     """Abstract base class for struct storage backends.
 
-    A storage backend is responsible for persisting, retrieving, and
-    listing struct instances (``BaseStruct`` subclasses) in a
-    concrete medium (e.g. the filesystem, a database, or a remote API).
+    A storage backend is responsible for persisting, retrieving, and listing
+    struct instances (``BaseStruct`` subclasses) in a concrete medium (e.g.
+    the filesystem, a database, or a remote API).
 
-    NOTE: Every function has both a synchronous and an asynchronous version.
-    By default, each asynchronous version runs the corresponding synchronous
-    function in a separate thread using ``asyncio.to_thread()``. In many
-    cases, this is sufficient, and there is no need to implement a dedicated
-    asynchronous version.
+    .. note::
+       Every function has both a synchronous and an asynchronous version.
+       By default, each asynchronous version runs the corresponding
+       synchronous function in a separate thread using
+       ``asyncio.to_thread()``. In many cases, this is sufficient, and there
+       is no need to implement a dedicated asynchronous version.
     """
 
     @abstractmethod
@@ -48,7 +65,7 @@ class AbstractStorage(Lifecycle):
 
         Returns
         -------
-        str or bytes or None
+        str, bytes or None
             The retrieved content, or ``None`` if not found
             and ``ignore_failure`` is ``True``.
         """
@@ -63,7 +80,7 @@ class AbstractStorage(Lifecycle):
     ) -> str | bytes | None:
         """Retrieve a resource from the storage backend.
 
-        This is the asynchron version of :meth:`retrieve_resource`.
+        This is the asynchronous version of :meth:`retrieve_resource`.
         """
         return await asyncio.to_thread(
             self.retrieve_resource,
@@ -85,8 +102,8 @@ class AbstractStorage(Lifecycle):
         Parameters
         ----------
         path : str
-            Path of the resource to retrieve.
-        content : str | bytes
+            Path of the resource to store.
+        content : str or bytes
             Content of the resource to be stored.
         ignore_failure : bool
             When ``True``, return instead of raising if the
@@ -103,7 +120,7 @@ class AbstractStorage(Lifecycle):
     ) -> None:
         """Store a resource to the storage backend.
 
-        This is the asynchron version of :meth:`store_resource`.
+        This is the asynchronous version of :meth:`store_resource`.
         """
         return await asyncio.to_thread(
             self.store_resource,
@@ -150,7 +167,7 @@ class AbstractStorage(Lifecycle):
     ) -> StructT | None:
         """Retrieve a struct from the storage backend.
 
-        This is the asynchron version of :meth:`retrieve_struct`.
+        This is the asynchronous version of :meth:`retrieve_struct`.
         """
         return await asyncio.to_thread(
             self.retrieve_struct,
@@ -176,6 +193,9 @@ class AbstractStorage(Lifecycle):
         struct_name : str or None
             Name under which the struct is stored.  When ``None``, a
             default name is derived from ``struct.storage_name``.
+        ignore_failure : bool
+            When ``True``, return instead of raising if the
+            struct cannot be stored.
         """
         ...
 
@@ -188,11 +208,11 @@ class AbstractStorage(Lifecycle):
     ) -> None:
         """Store a struct in the storage backend.
 
-        This is the asynchron version of :meth:`store_struct`.
+        This is the asynchronous version of :meth:`store_struct`.
         """
         return await asyncio.to_thread(
             self.store_struct,
-            struct_type=struct_type,
+            struct=struct,
             struct_name=struct_name,
             ignore_failure=ignore_failure,
         )
@@ -206,18 +226,21 @@ class AbstractStorage(Lifecycle):
         struct_name: str | None = None,
         ignore_failure: bool = False,
     ) -> None:
-        """Stores an increment to an incrementally stored struct
+        """Store an increment to an incrementally stored struct.
 
         Parameters
         ----------
-        struct : BaseStruct
-            The BaseStruct instance to store.
-        increment : BaseStruct
-            The BaseStruct increment instance to store within ``struct`'s
+        struct : BaseIncrementalStruct
+            The BaseIncrementalStruct instance to store.
+        increment : BaseEvent
+            The BaseEvent increment instance to store within ``struct``'s
             scope.
         struct_name : str or None
             Name under which the struct is stored.  When ``None``, a
             default name is derived from ``struct.storage_name``.
+        ignore_failure : bool
+            When ``True``, return instead of raising if the
+            increment cannot be stored.
         """
         ...
 
@@ -229,13 +252,13 @@ class AbstractStorage(Lifecycle):
         struct_name: str | None = None,
         ignore_failure: bool = False,
     ) -> None:
-        """Stores an increment to an incrementally stored struct
+        """Store an increment to an incrementally stored struct.
 
-        This is the asynchron version of :meth:`store_struct_increment`.
+        This is the asynchronous version of :meth:`store_struct_increment`.
         """
         return await asyncio.to_thread(
             self.store_struct_increment,
-            struct_type=struct_type,
+            struct=struct,
             increment=increment,
             struct_name=struct_name,
             ignore_failure=ignore_failure,
@@ -248,7 +271,7 @@ class AbstractStorage(Lifecycle):
         Parameters
         ----------
         struct_type : type[BaseStruct]
-            The BaseDtruct class whose stored instances should be listed.
+            The BaseStruct class whose stored instances should be listed.
 
         Returns
         -------
@@ -260,7 +283,7 @@ class AbstractStorage(Lifecycle):
     async def alist_structs(self, struct_type: type[BaseStruct]) -> list[str]:
         """List all stored struct names for a given struct type.
 
-        This is the asynchron version of :meth:`list_structs`.
+        This is the asynchronous version of :meth:`list_structs`.
         """
         return await asyncio.to_thread(
             self.list_structs,
@@ -268,35 +291,35 @@ class AbstractStorage(Lifecycle):
         )
 
     @abstractmethod
-    def get_checkpoint_saver(
-        self, saver_id: str | None = None
-    ) -> BaseCheckpointSaver:
-        """Returns the requested checkpoint saver
+    def get_checkpoint_store(
+        self, store_id: str | None = None
+    ) -> AgentCheckpointStoreProtocol | None:
+        """Return the requested checkpoint store.
 
-        Usually a single checkpoint saver for the whole application is
-        sufficient. If multiple savers are needed, use ``saver_id`` to
-        identify them. E.g. ``str(session_id)``
+        Usually a single checkpoint store for the whole application is
+        sufficient. If multiple stores are needed, use ``store_id`` to
+        identify them. E.g. ``str(session_id)``.
 
         Parameters
         ----------
-        saver_id : str | None, optional
-            ID if multiple checkpoint savers are used
+        store_id : str or None, optional
+            ID if multiple checkpoint stores are used.
 
         Returns
         -------
-        BaseCheckpointSaver
-            Checkpoint saver instance
+        AgentCheckpointStoreProtocol
+            Checkpoint store instance.
         """
         ...
 
-    async def aget_checkpoint_saver(
-        self, saver_id: str | None = None
-    ) -> BaseCheckpointSaver:
-        """Returns the requested checkpoint saver
+    async def aget_checkpoint_store(
+        self, store_id: str | None = None
+    ) -> AgentCheckpointStoreProtocol | None:
+        """Return the requested checkpoint store.
 
-        This is the asynchron version of :meth:`get_checkpoint_saver`.
+        This is the asynchronous version of :meth:`get_checkpoint_store`.
         """
         return await asyncio.to_thread(
-            self.get_checkpoint_saver,
-            saver_id=saver_id,
+            self.get_checkpoint_store,
+            store_id=store_id,
         )
