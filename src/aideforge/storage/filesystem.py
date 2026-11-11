@@ -1,27 +1,18 @@
 # TODO: expanduser wherever applicable. Maybe only in struct_paths?
 # TODO: figure out which EXCLUSIONS to use: unset, defaults, none, computed_fields
-# TODO: Async solution
-#import aiosqlite
-#from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-#conn = await aiosqlite.connect("checkpoint.db")
-#checkpointer = AsyncSqliteSaver(conn)
-#await conn.close()
 
 import json
 import os
 import yaml
 from itertools import product
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, Protocol, cast
 
-import aiosqlite
-from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-import sqlite3
-
-from aideforge.abc import AbstractStorage, StructT
+from aideforge.abc.storage import (
+    AbstractStorage,
+    AgentCheckpointStoreProtocol,
+    StructT,
+)
 from aideforge.structs.abc import (
     BaseStruct,
     BaseIncrementalStruct,
@@ -31,10 +22,30 @@ from aideforge.structs.abc import (
 )
 from aideforge.utils import deep_merge, remove_nones
 
+try:
+    import aiosqlite
+    import sqlite3
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    LANGGRAPH_SUPPORTED = True
+except:
+    LANGGRAPH_SUPPORTED = False
+
 __all__ = ["FileSystemStorage"]
 
 EXTENSIONS = (".json", ".jsonl", ".yaml", ".yml")
 EXCLUSIONS = {}
+
+class DatabaseConnection(Protocol):
+    """ Database connection semantif type marker
+
+    The protocol serves as a semantic type marker, identifying objects
+    intended to provide database connection without imposing any
+    implementation requirements. Concrete integrations are responsible for
+    ensuring compatibility with the agent runtime that consumes them.
+    """
+    ...
 
 
 class FileSystemStorage(AbstractStorage):
@@ -46,7 +57,8 @@ class FileSystemStorage(AbstractStorage):
     encountered having the highest precedence.
     """
 
-    checkpoint_saver: BaseCheckpointSaver | None = None
+    _checkpoint_store: ClassVar[AgentCheckpointStoreProtocol | None] = None
+    _conn: ClassVar[DatabaseConnection | None] = None
 
     def __init__(
         self,
@@ -71,31 +83,34 @@ class FileSystemStorage(AbstractStorage):
         # assumes valid inputs)
         self.struct_paths = [] if struct_paths is None else struct_paths.copy()
         self.struct_format = struct_format
-        self._conn = None
+        FileSystemStorage._conn = None
 
     def __del__(self) -> None:
-        if self._conn:
-            self._conn.close()
+        # TODO: what should we do in async case if acleanup has not been called
+        if FileSystemStorage._conn:
+            FileSystemStorage._conn.close()
 
     def prepare(self) -> None:
-        dbpath = self._get_path(None, "checkpoint.db")
-        self._conn = sqlite3.connect(dbpath)
-        FileSystemStorage.checkpoint_saver = SqliteSaver(self._conn)
+        if LANGGRAPH_SUPPORTED:
+            dbpath = self._get_path(None, "checkpoint.db")
+            FileSystemStorage._conn = sqlite3.connect(dbpath)
+            FileSystemStorage._checkpoint_store = SqliteSaver(FileSystemStorage._conn)
 
     async def aprepare(self) -> None:
-        dbpath = self._get_path(None, "checkpoint.db")
-        self._conn = await aiosqlite.connect(dbpath)
-        FileSystemStorage.checkpoint_saver = AsyncSqliteSaver(self._conn)
+        if LANGGRAPH_SUPPORTED:
+            dbpath = self._get_path(None, "checkpoint.db")
+            FileSystemStorage._conn = await aiosqlite.connect(dbpath)
+            FileSystemStorage._checkpoint_store = AsyncSqliteSaver(FileSystemStorage._conn)
 
     def cleanup(self) -> None:
-        if self._conn:
-            self._conn.close()
-        self._conn = None
+        if FileSystemStorage._conn:
+            FileSystemStorage._conn.close()
+        FileSystemStorage._conn = None
 
     async def acleanup(self) -> None:
-        if self._conn:
-            await self._conn.close()
-        self._conn = None
+        if FileSystemStorage._conn:
+            await FileSystemStorage._conn.close()
+        FileSystemStorage._conn = None
 
     def retrieve_resource(
         self,
@@ -104,7 +119,7 @@ class FileSystemStorage(AbstractStorage):
         mode: str = "t",
         ignore_failure: bool = False,
     ) -> str | bytes | None:
-        if mode not in ("b","t"):
+        if mode not in ("b", "t"):
             raise ValueError(f"Invalid retrieve mode '{mode}'")
         if path[0].isalpha():
             path = "%/" + path
@@ -127,7 +142,7 @@ class FileSystemStorage(AbstractStorage):
     def store_resource(
         self,
         path: str,
-        content: str|bytes,
+        content: str | bytes,
         *,
         ignore_failure: bool = False,
     ) -> None:
@@ -199,17 +214,21 @@ class FileSystemStorage(AbstractStorage):
             )
         return list(sorted({Path(f).stem for f in files}))
 
-    def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
-        _ = saver_id
-        if FileSystemStorage.checkpoint_saver is None:
+    def get__checkpoint_store(
+        self, store_id: str | None = None
+    ) -> AgentCheckpointStoreProtocol:
+        _ = store_id
+        if FileSystemStorage._checkpoint_store is None:
             self.prepare()
-        return FileSystemStorage.checkpoint_saver
+        return FileSystemStorage._checkpoint_store
 
-    async def aget_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
-        _ = saver_id
-        if FileSystemStorage.checkpoint_saver is None:
+    async def aget__checkpoint_store(
+        self, store_id: str | None = None
+    ) -> AgentCheckpointStoreProtocol:
+        _ = store_id
+        if FileSystemStorage._checkpoint_store is None:
             await self.aprepare()
-        return FileSystemStorage.checkpoint_saver
+        return FileSystemStorage._checkpoint_store
 
     # private methods
 
@@ -289,7 +308,9 @@ class FileSystemStorage(AbstractStorage):
             chprop = cast(ChangeProperty, event)
             chprop.change(struct)
 
-    def _get_path(self, struct: BaseStruct|None, struct_name: str | None) -> Path:
+    def _get_path(
+        self, struct: BaseStruct | None, struct_name: str | None
+    ) -> Path:
         if struct_name is None:
             struct_name = struct.storage_name.format(struct=struct)
         ext = self.struct_format.lower()

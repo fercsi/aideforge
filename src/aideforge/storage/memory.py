@@ -1,10 +1,11 @@
 from collections import defaultdict
-from typing import cast
+from typing import ClassVar, cast
 
-from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import InMemorySaver
-
-from aideforge.abc import AbstractStorage, StructT
+from aideforge.abc.storage import (
+    AbstractStorage,
+    AgentCheckpointStoreProtocol,
+    StructT,
+)
 from aideforge.structs.abc import (
     BaseStruct,
     BaseIncrementalStruct,
@@ -13,13 +14,27 @@ from aideforge.structs.abc import (
     StructProxy,
 )
 
+try:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    LANGGRAPH_SUPPORTED = True
+except:
+    LANGGRAPH_SUPPORTED = False
+
 __all__ = ["MemoryStorage"]
 
 
 class MemoryStorage(AbstractStorage):
-    checkpoint_saver: InMemorySaver = InMemorySaver()
-    resources: dict[str, str | bytes] = {}
-    structs: defaultdict[str, dict[str, BaseStruct]] = defaultdict(dict)
+    _checkpoint_store: ClassVar[AgentCheckpointStoreProtocol] | None = None
+    _resources: ClassVar[dict[str, str | bytes]] = {}
+    _structs: ClassVar[defaultdict[str, dict[str, BaseStruct]]] = defaultdict(
+        dict
+    )
+
+    def __init__(self) -> None:
+        if MemoryStorage._checkpoint_store is None:
+            if LANGGRAPH_SUPPORTED:
+                MemoryStorage._checkpoint_store = InMemorySaver()
 
     def retrieve_resource(
         self,
@@ -53,7 +68,7 @@ class MemoryStorage(AbstractStorage):
                 return None
             else:
                 raise FileNotFoundError(f"Resource '{path}' not found.")
-        content = MemoryStorage.resources[path]
+        content = MemoryStorage._resources[path]
         return content
 
     def store_resource(
@@ -75,7 +90,7 @@ class MemoryStorage(AbstractStorage):
             When ``True``, return instead of raising if the
             resource cannot be stored.
         """
-        MemoryStorage.resources[path] = content
+        MemoryStorage._resources[path] = content
 
     def retrieve_struct(
         self,
@@ -109,7 +124,7 @@ class MemoryStorage(AbstractStorage):
             If the struct is not found and ``ignore_failure`` is ``False``.
         """
         category, struct_name = _get_struct_keys(struct_type, struct_name)
-        structs = MemoryStorage.structs
+        structs = MemoryStorage._structs
         if category in structs and struct_name in structs[category]:
             return structs[category][struct_name].model_copy(deep=True)
         else:
@@ -134,7 +149,7 @@ class MemoryStorage(AbstractStorage):
             derived from ``struct.storage_name``.
         """
         category, struct_name = _get_struct_keys(struct, struct_name)
-        structs = MemoryStorage.structs
+        structs = MemoryStorage._structs
         structs[category][struct_name] = struct.model_copy(deep=True)
 
     def store_struct_increment(
@@ -158,7 +173,7 @@ class MemoryStorage(AbstractStorage):
             default name is derived from ``struct.storage_name``.
         """
         category, struct_name = _get_struct_keys(struct, struct_name)
-        structs = MemoryStorage.structs
+        structs = MemoryStorage._structs
         if category in structs and struct_name in structs[category]:
             # Apply to the stored one!
             struct = structs[category][struct_name]
@@ -189,22 +204,23 @@ class MemoryStorage(AbstractStorage):
             across all configured search paths.
         """
         category = struct_type.kinds or struct_type.kind
-        structs = MemoryStorage.structs
+        structs = MemoryStorage._structs
         if category not in structs:
             return []
         return list(sorted(structs[category].keys()))
 
-    def get_checkpoint_saver(self, saver_id:str | None = None) -> BaseCheckpointSaver:
-        _ = saver_id
-        return MemoryStorage.checkpoint_saver
+    def get_checkpoint_store(
+        self, store_id: str | None = None
+    ) -> AgentCheckpointStoreProtocol:
+        _ = store_id
+        return MemoryStorage.checkpoint_store
+
 
 def _get_struct_keys(
     struct: StructT | type[StructT],
     struct_name: str | None = None,
 ) -> tuple[str, str]:
     if struct_name is None:
-        struct_name = struct.storage_name.format(
-            struct=StructProxy(struct)
-        )
+        struct_name = struct.storage_name.format(struct=StructProxy(struct))
     category = struct.kinds or struct.kind
     return category, struct_name
