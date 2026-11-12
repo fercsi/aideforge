@@ -116,7 +116,7 @@ class AgentRuntime(AbstractAgentRuntime):
 
         self._storage = storage
         if storage:
-            checkpointer = storage.get_checkpoint_saver()
+            checkpointer = storage.get_checkpoint_store()
         else:
             checkpointer = InMemorySaver()
         middleware = [

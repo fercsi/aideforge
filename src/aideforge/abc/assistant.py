@@ -1,16 +1,20 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import Any, AsyncGenerator, Generator
+from typing import Any, AsyncGenerator, Generator, TYPE_CHECKING
 
-from aideforge.agent import ActionRequest, ApprovalDecision
-from aideforge.commands import BaseCommand
-from aideforge.results import PromptResult
-from aideforge.structs.session import SessionState
-from aideforge.structs.settings import SettingsGroup
-from .runtime import AbstractAgentRuntime
-from .callback import AgentCallbackHandler
 from .lifecycle import Lifecycle
-from .storage import AbstractStorage
+
+if TYPE_CHECKING:
+    from aideforge.agent.types import ActionRequest, ApprovalDecision
+    from aideforge.commands import BaseCommand
+    from aideforge.results import PromptResult
+    from aideforge.structs.session import SessionState
+    from aideforge.structs.settings import SettingsGroup
+    from .runtime import AbstractAgentRuntime
+    from .callback import AgentCallbackHandler
+    from .storage import AbstractStorage
 
 __all__ = ["AbstractAssistant", "TemplateResolver"]
 

@@ -214,7 +214,7 @@ class FileSystemStorage(AbstractStorage):
             )
         return list(sorted({Path(f).stem for f in files}))
 
-    def get__checkpoint_store(
+    def get_checkpoint_store(
         self, store_id: str | None = None
     ) -> AgentCheckpointStoreProtocol:
         _ = store_id
@@ -222,7 +222,7 @@ class FileSystemStorage(AbstractStorage):
             self.prepare()
         return FileSystemStorage._checkpoint_store
 
-    async def aget__checkpoint_store(
+    async def aget_checkpoint_store(
         self, store_id: str | None = None
     ) -> AgentCheckpointStoreProtocol:
         _ = store_id

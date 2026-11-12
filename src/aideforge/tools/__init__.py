@@ -5,10 +5,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TypeAlias
 
 from langchain.tools import BaseTool
 from langchain_core.tools import StructuredTool
+
+from aideforge.abc.tool import AgentToolProtocol
 
 __all__ = [
     "AideForgeStructuredTool",
@@ -30,14 +32,14 @@ class PreconfiguredTool:
 
     Attributes
     ----------
-    tool : BaseTool  Callable or custom classes
+    tool : AgentToolProtocol, Callable or custom classes
         The tool class or callable to be configured and instantiated.
     config : dict[str, Any] or None, optional
         Configuration parameters to pass to the tool during instantiation,
         or ``None`` if no configuration is needed.
     """
 
-    tool: type[BaseTool]
+    tool: type[AgentToolProtocol]
     config: dict[str, Any] | None = None
 
 
@@ -48,8 +50,10 @@ class ToolPolicy(StrEnum):
     DENY = "deny"
 
 
-ToolType = BaseTool | Callable[..., Any]
-ToolBlueprintType = type[BaseTool] | PreconfiguredTool | Callable[..., Any]
+ToolType = AgentToolProtocol | Callable[..., Any]
+ToolBlueprintType: TypeAlias = (
+    type[AgentToolProtocol] | PreconfiguredTool | Callable[..., Any]
+)
 
 
 class _DescriptionMixin:

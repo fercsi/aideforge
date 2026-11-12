@@ -25,7 +25,7 @@ __all__ = ["MemoryStorage"]
 
 
 class MemoryStorage(AbstractStorage):
-    _checkpoint_store: ClassVar[AgentCheckpointStoreProtocol] | None = None
+    _checkpoint_store: ClassVar[AgentCheckpointStoreProtocol | None] = None
     _resources: ClassVar[dict[str, str | bytes]] = {}
     _structs: ClassVar[defaultdict[str, dict[str, BaseStruct]]] = defaultdict(
         dict
