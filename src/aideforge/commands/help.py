@@ -1,11 +1,8 @@
 from argparse import Namespace
 
-from . import (
-    BaseCommand,
-    CommandArgumentParser,
-    CommandExecutionError,
-)
+from aideforge.abc.command import BaseCommand, CommandArgumentParser
 from aideforge.results import (
+    CommandExecutionError,
     CommandOutput,
     CommandResult,
     InvalidArgument,
@@ -93,7 +90,7 @@ class HelpCommand(BaseCommand):
         """
         command = args.command_name
         subcommand = args.subcommand_name
-        commands = self._assistant.get_commands()
+        commands = self._assistant.commands
         if command:
             if command not in commands:
                 return InvalidArgument(

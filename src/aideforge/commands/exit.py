@@ -1,6 +1,6 @@
 from argparse import Namespace
 
-from . import BaseCommand
+from aideforge.abc.command import BaseCommand
 from aideforge.results import CommandResult, ExitAssistant
 
 __all__ = ["ExitCommand"]

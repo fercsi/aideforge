@@ -8,12 +8,12 @@ from .lifecycle import Lifecycle
 
 if TYPE_CHECKING:
     from aideforge.agent.types import ActionRequest, ApprovalDecision
-    from aideforge.commands import BaseCommand
     from aideforge.results import PromptResult
     from aideforge.structs.session import SessionState
     from aideforge.structs.settings import SettingsGroup
     from .runtime import AbstractAgentRuntime
     from .callback import AgentCallbackHandler
+    from .command import BaseCommand
     from .storage import AbstractStorage
 
 __all__ = ["AbstractAssistant", "TemplateResolver"]

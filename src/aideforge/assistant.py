@@ -21,11 +21,13 @@ from pydantic import Field
 
 from aideforge.abc.assistant import AbstractAssistant, TemplateResolver
 from aideforge.abc.callback import AgentCallbackHandler
+from aideforge.abc.command import BaseCommand
 from aideforge.abc.storage import AbstractStorage
 from aideforge.agent.blueprint import AgentBlueprint
 from aideforge.agent.runtime import AgentRuntime
 from aideforge.agent.types import ActionRequest, ApprovalDecision
-from aideforge.commands import BaseCommand, CommandExecutor, default_commands
+from aideforge.command_executor import CommandExecutor
+from aideforge.commands import default_commands
 from aideforge.results import (
     CommandError, CommandSuccess, LlmError, LlmResponse, PromptError, PromptResult,
 )
@@ -148,7 +150,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
             llm = llm.model_copy(deep=True)
         self._current_llm = llm
 
-        self.command_executor = CommandExecutor(self)
+        self._command_executor = CommandExecutor(self)
         commands = (commands if commands is not None else []) + default_commands
         self.register_commands(commands)
 
@@ -343,7 +345,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
             register for use as slash-commands.
         """
         for command in commands:
-            self.command_executor.register_command(command)
+            self._command_executor.register_command(command)
 
 
     # Miscellaneous functions
@@ -492,7 +494,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
         parts = shlex.split(prompt[1:])
         command = parts[0] if parts else ""
         args = parts[1:]
-        result = self.command_executor.execute_command(command, args)
+        result = self._command_executor.execute_command(command, args)
         self._store_session()
         return result
 

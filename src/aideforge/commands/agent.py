@@ -1,17 +1,13 @@
 from argparse import Namespace
 
-from . import (
-    BaseCommand,
-    CommandArgumentParser,
-    CommandExecutionError,
-)
+from aideforge.abc.command import BaseCommand, CommandArgumentParser
 from aideforge.results import (
+    CommandExecutionError,
     CommandOutput,
     CommandResult,
     InvalidArgument,
     Success,
 )
-
 
 __all__ = ["AgentCommand"]
 
