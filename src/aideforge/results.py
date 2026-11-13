@@ -275,6 +275,7 @@ CommandResult = Annotated[
     CommandSuccess | CommandError, Field(discriminator="status")
 ]
 
+
 # LLM RELATED RESULTS
 
 
@@ -292,13 +293,33 @@ class LlmResponse(BaseModel):
     status: Literal["response"] = "response"
     content: str | None
 
+
 # ASSISTANT RELATED RESULTS
 
+
+#: PromptError
+#: -----------
+#:
+#: Represents the possible erroneous outcomes of an assistant prompt.
+#:
+#: This type alias can be one of:
+#:
+#: - ``CommandError``
+#: - ``LlmError``
 PromptError = Annotated[
     CommandError | LlmError, Field(descriminator="error_code")
 ]
 
+#: PromptResult
+#: ------------
+#:
+#: Represents the possible outcomes of an assistant prompt.
+#:
+#: This type alias can be one of:
+#:
+#: - ``LlmResponse``
+#: - ``CommandSuccess``
+#: - ``CommandError``
 PromptResult = Annotated[
     LlmResponse | CommandSuccess | PromptError, Field(descriminator="status")
 ]
-
