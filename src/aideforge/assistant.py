@@ -15,27 +15,38 @@ from typing import (
     TypeAlias,
 )
 
-
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import Field
 
+from aideforge.abc.agent_blueprint import AbstractAgentBlueprint
+from aideforge.abc.agent_runtime import AbstractAgentRuntime
 from aideforge.abc.assistant import AbstractAssistant, TemplateResolver
 from aideforge.abc.callback import AgentCallbackHandler
 from aideforge.abc.command import BaseCommand
 from aideforge.abc.storage import AbstractStorage
-from aideforge.agent.blueprint import AgentBlueprint
-from aideforge.agent.runtime import AgentRuntime
+from aideforge.agent.blueprint import AgentBlueprint  # Langchain specific
 from aideforge.agent.types import ActionRequest, ApprovalDecision
 from aideforge.command_executor import CommandExecutor
 from aideforge.commands import default_commands
 from aideforge.results import (
-    CommandError, CommandSuccess, LlmError, LlmResponse, PromptError, PromptResult,
+    CommandError,
+    CommandSuccess,
+    LlmError,
+    LlmResponse,
+    PromptError,
+    PromptResult,
 )
 from aideforge.storage import MemoryStorage
 from aideforge.structs.agent import AgentConfig
 from aideforge.structs.llm import LlmConfig
 from aideforge.structs.session import SessionState
-from aideforge.structs.settings import AssistantSettings, BaseSettings, SettingsGroup, get_settings_type, validate_settings
+from aideforge.structs.settings import (
+    AssistantSettings,
+    BaseSettings,
+    SettingsGroup,
+    get_settings_type,
+    validate_settings,
+)
 from aideforge.structs.theme import Theme, theme_collection
 from aideforge.tools import ToolType
 
@@ -53,7 +64,7 @@ AssistantSettingsInputType = (
     BaseSettings | dict[str, Any] | list[BaseSettings | dict[str, Any]]
 )
 AssistantAgentsInputType = list[
-    AgentBlueprint | AgentConfig | dict[str, Any] | str
+    AbstractAgentBlueprint | AgentConfig | dict[str, Any] | str
 ]
 
 
@@ -68,6 +79,8 @@ class Assistant(AbstractAssistant, TemplateResolver):
     ----------
     """
 
+    agent_blueprint = AgentBlueprint
+
     def __init__(
         self,
         *,
@@ -79,9 +92,13 @@ class Assistant(AbstractAssistant, TemplateResolver):
         llm: LlmConfig | dict[str, Any] | None = None,
         commands: list[type[BaseCommand]] | None = None,
         description: str = DEFAULT_DESCRIPTION,
+        agent_blueprint: type[AbstractAgentBlueprint] | None = None,
     ):
         storage = storage or MemoryStorage()
         self._storage = storage
+
+        if agent_blueprint is not None:
+            self.agent_blueprint = agent_blueprint
 
         # Setup overall settings
         self._settings = SettingsGroup(storage=storage)
@@ -107,7 +124,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
 
         # Setup initial agent blueprints
         agent_blueprints: list[
-            AgentBlueprint
+            AbstractAgentBlueprint
             | AgentConfig
             | dict[str, Any]
             | str  # agent configuration structure
@@ -115,7 +132,9 @@ class Assistant(AbstractAssistant, TemplateResolver):
                 IdType, dict[str, Any]
             ]  # agent ID and config for restoration
         ]
-        agent_blueprints = deepcopy(agents) if agents else [AgentBlueprint()]
+        agent_blueprints = (
+            deepcopy(agents) if agents else [self.agent_blueprint()]
+        )
         agent_blueprints.extend(storage.list_structs(AgentConfig))
         # lazy loaded agent blueprints
         self.agent_blueprints = {}
@@ -125,7 +144,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
                 name = blueprint.get("name")
             elif not isinstance(
                 blueprint, str
-            ):  # AgentConfig or AgentBlueprint
+            ):  # AgentConfig or AbstractAgentBlueprint
                 name = blueprint.name
             if name is None:
                 raise ValueError(f"Agent defined without a name: {blueprint}")
@@ -194,14 +213,15 @@ class Assistant(AbstractAssistant, TemplateResolver):
         self._store_session()
         await self._storage.acleanup()
 
-
     # Prompt processing
 
     def prompt_processor(
         self,
         prompt: str,
         *,
-        callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None
+        callbacks: AgentCallbackHandler
+        | list[AgentCallbackHandler]
+        | None = None,
     ) -> Generator[ActionRequest, ApprovalDecision, PromptResult]:
         """
         >>> processor = assistant.prompt_processor("List me the python files")
@@ -222,7 +242,9 @@ class Assistant(AbstractAssistant, TemplateResolver):
             return self._process_command(prompt)
 
         agent = self._get_current_agent()
-        response = yield from agent.prompt_processor(prompt, callbacks=callbacks)
+        response = yield from agent.prompt_processor(
+            prompt, callbacks=callbacks
+        )
         self._store_session()
         return response
 
@@ -230,7 +252,9 @@ class Assistant(AbstractAssistant, TemplateResolver):
         self,
         prompt: str,
         *,
-        callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None
+        callbacks: AgentCallbackHandler
+        | list[AgentCallbackHandler]
+        | None = None,
     ) -> AsyncGenerator[ActionRequest | PromptResult, ApprovalDecision]:
         """Process a user prompt and return the result.
 
@@ -283,7 +307,6 @@ class Assistant(AbstractAssistant, TemplateResolver):
     def session(self) -> SessionState:
         return self._session
 
-
     def change_session(
         self, session: SessionState | dict[str, Any] | str | None = None
     ) -> None:
@@ -323,7 +346,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
         return list(self.agent_blueprints)
 
     @property
-    def current_agent(self) -> AgentRuntime:
+    def current_agent(self) -> AbstractAgentRuntime:
         return self._get_current_agent()
 
     def change_agent(self, agent: str) -> None:
@@ -346,7 +369,6 @@ class Assistant(AbstractAssistant, TemplateResolver):
         """
         for command in commands:
             self._command_executor.register_command(command)
-
 
     # Miscellaneous functions
 
@@ -393,7 +415,9 @@ class Assistant(AbstractAssistant, TemplateResolver):
 
     # PRIVATE METHODS
 
-    def _resolver(self, resolvers: list[TemplateResolver], match: re.Match[str]) -> str:
+    def _resolver(
+        self, resolvers: list[TemplateResolver], match: re.Match[str]
+    ) -> str:
         var = match.group(0)[1:-1]
         fmt = ""
         if ":" in var:
@@ -408,7 +432,6 @@ class Assistant(AbstractAssistant, TemplateResolver):
                 return result
         orfmt = f" or format '{fmt}'" if fmt else ""
         raise ValueError(f"Unknown template variable '{var}'{orfmt}.")
-        
 
     def _store_session(self) -> None:
         if self._session is None:
@@ -417,7 +440,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
             self._storage.store_struct(self._session)
         self._stored_input_count = self._session.input_count
 
-    def _get_current_agent(self) -> AgentRuntime:
+    def _get_current_agent(self) -> AbstractAgentRuntime:
         """Retrieve or lazily instantiate the current agent runtime.
 
         If the current agent has not yet been instantiated, it is created
@@ -425,7 +448,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
 
         Returns
         -------
-        AgentRuntime
+        AbstractAgentRuntime
             The runtime instance for the currently selected agent.
 
         Raises
@@ -449,11 +472,13 @@ class Assistant(AbstractAssistant, TemplateResolver):
                 blueprint = agent_state.config
 
             if isinstance(blueprint, str):  # struct name in store
-                blueprint = self._storage.retrieve_struct(AgentConfig, blueprint)
+                blueprint = self._storage.retrieve_struct(
+                    AgentConfig, blueprint
+                )
             if isinstance(blueprint, dict):
                 blueprint = AgentConfig.model_validate(blueprint)
             if isinstance(blueprint, AgentConfig):
-                blueprint = AgentBlueprint(
+                blueprint = self.agent_blueprint(
                     config=blueprint,
                     tool_pool=self._tool_pool,
                     storage=self._storage,
@@ -498,14 +523,16 @@ class Assistant(AbstractAssistant, TemplateResolver):
         self._store_session()
         return result
 
-    def _self_resolve(self, var: str, fmt: str) -> str | None:
+    # Template resolver interface helpers
+
+    def _self_resolve(self, name: str, fmt: str) -> str | None:
         """Replace a single prompt-string placeholder variable.
 
         For supported variables, see :meth:`eval_prompt_string`
 
         Parameters
         ----------
-        var : str
+        name : str
             The variable name extracted from the placeholder. May include
             a format specifier after a colon (e.g. ``"time:hm"``).
 
@@ -517,47 +544,56 @@ class Assistant(AbstractAssistant, TemplateResolver):
         Raises
         ------
         ValueError
-            If *var* is not a recognized placeholder.
+            If *name* is not a recognized placeholder.
         """
+
+        # Session specific info
+
+        resolvers = [
+            self._resolve_session,
+            self._resolve_agent,
+            self._resolve_context,
+            self._resolve_token,
+            _resolve_datetime,
+        ]
+
+        for resolver in resolvers:
+            value = resolver(name, fmt)
+            if value is not None:
+                return value
+
+    def _resolve_session(self, name:str, fmt:str) -> str | None:
+        # {session_id}      SessionState ID
+        # {sn}              Serial number of current input
+        if name == "session_id" and fmt == "":
+            return str(self._session.session_id)
+        if name == "sn" and fmt == "":
+            return str(self._session.input_count + 1)
+
+    def _resolve_agent(self, name:str, fmt:str) -> str | None:
         # {agent}           Agent's name
         # {model}           LL Model's name
         # {model_provider}  LLM provider's name
-        # {time}            Time
-        #                   "hm" - in hh:mm format (default format)
-        #                   "hms" - in hh:mm:ss format
-        # {date}            Date
-        #                   "ymd" - YYYY-MM-DD format (default format)
-        #                   "md" - MM-DD format
-        # {sn}              Serial number of current input
-        # {context}         Context size
-        #                   "a" - automatic format: B if size <10000 (default)
-        #                   "b" - in B
-        #                   "k" - in kB
-        #                   "%" - in % of maximum input tokens
-        # {tokens}          Last run's token count
-        #                   "i"/"o"/"t"/"r" - input, output (default), total, reasoning tokens
-        #                   "a"/"b"/"k" - auto, byte, kbyte size
-        # {session_id}      SessionState ID
-
-        # Session specific info
-        if var == "session_id" and fmt == "":
-            return str(self._session.session_id)
-        if var == "sn" and fmt == "":
-            return str(self._session.input_count + 1)
-
         # Agent specific info
-        if var == "agent" and fmt == "":
+        if name == "agent" and fmt == "":
             return self.current_agent_name
         # NOTE: agents are prepared lazily. If you need info for PS, agent
         # will be created automatically before PS is displayed!
         # Because of the lazy load _current_llm would show a "wrong" current
         # LLM. e.g. "{model}@{agent}" shows the old model with the current
-        if var == "model" and fmt == "":
-            return self._get_current_agent().llm_config.model
-        if var == "model_provider" and fmt == "":
-            return self._get_current_agent().llm_config.provider
-        if var == "context":
-            ctxinfo = self._get_current_agent().context_info
+        if name == "model" and fmt == "":
+            return self._get_current_agent().state.llm.model
+        if name == "model_provider" and fmt == "":
+            return self._get_current_agent().state.llm.provider
+
+    def _resolve_context(self, name:str, fmt:str) -> str | None:
+        # {context} Context size
+        #           "a" - automatic format: B if size <10000 (default)
+        #           "b" - in B
+        #           "k" - in kB
+        #           "%" - in % of maximum input tokens
+        if name == "context":
+            ctxinfo = self._get_current_agent().state.context_info
             size = ctxinfo.current_tokens
             formatted = _format_size(size, fmt)
             if formatted is not None:
@@ -569,8 +605,13 @@ class Assistant(AbstractAssistant, TemplateResolver):
                 return (
                     str(round(100 * size / maxsize, 1)).replace(".0", "") + "%"
                 )
-        if var == "tokens":
-            ctxinfo = self._get_current_agent().context_info
+
+    def _resolve_token(self, name:str, fmt:str) -> str | None:
+        # {tokens} Last run's token count
+        #          "i"/"o"/"t"/"r" - input, output (default), total, reasoning tokens
+        #          "a"/"b"/"k" - auto, byte, kbyte size
+        if name == "tokens":
+            ctxinfo = self._get_current_agent().state.context_info
             if fmt == "":
                 fmt = "oa"
             elif len(fmt) == 1:
@@ -592,29 +633,23 @@ class Assistant(AbstractAssistant, TemplateResolver):
                 if formatted is not None:
                     return formatted
 
-        # Time related info
-        if var == "time":  # local time, ISO format
-            if fmt == "hms":
-                return datetime.now().strftime("%H:%M:%S")
-            elif fmt in ("hm", ""):
-                return datetime.now().strftime("%H:%M")
-        if var == "date":
-            if fmt == "md":
-                return datetime.now().strftime("%m-%d")
-            elif fmt in ("ymd", ""):
-                return datetime.now().strftime("%Y-%m-%d")
-        orfmt = f" or format '{fmt}'" if fmt else ""
-#>        raise ValueError(f"Unknown prompt string variable '{var}'{orfmt}.")
-
-    def stop_processing(self) -> None:
-        """Stop any ongoing prompt processing.
-
-        Currently disabled.
-        """
-        raise NotImplementedError(
-            "Stop processing current run is not implemented, yet"
-        )
-
+def _resolve_datetime(name:str, fmt:str) -> str | None:
+    # {time}            Time
+    #                   "hm" - in hh:mm format (default format)
+    #                   "hms" - in hh:mm:ss format
+    # {date}            Date
+    #                   "ymd" - YYYY-MM-DD format (default format)
+    #                   "md" - MM-DD format
+    if name == "time":  # local time, ISO format
+        if fmt == "hms":
+            return datetime.now().strftime("%H:%M:%S")
+        elif fmt in ("hm", ""):
+            return datetime.now().strftime("%H:%M")
+    if name == "date":
+        if fmt == "md":
+            return datetime.now().strftime("%m-%d")
+        elif fmt in ("ymd", ""):
+            return datetime.now().strftime("%Y-%m-%d")
 
 def _format_size(size: int | None, fmt: str) -> str | None:
     # None means, formatting refused (this formatter cannot handle it)
