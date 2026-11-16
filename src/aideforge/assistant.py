@@ -13,6 +13,7 @@ from typing import (
     Callable,
     Generator,
     TypeAlias,
+    Union,
 )
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -48,22 +49,35 @@ from aideforge.structs.settings import (
     validate_settings,
 )
 from aideforge.structs.theme import Theme, theme_collection
-from aideforge.tools import ToolType
+from aideforge.tools import ToolBlueprintType
 
-__all__ = ["Assistant"]
+__all__ = [
+    "Assistant",
+    "AssistantSettingsInputType",
+    "AssistantAgentsInputType",
+    ]
+
 
 DEFAULT_DESCRIPTION = (
-    "I’m a versatile AI assistant that can leverage multiple specialized "
+    "I'm a versatile AI assistant that can leverage multiple specialized "
     "agents and tools to solve complex tasks. I adapt to your needs, "
     "coordinate different capabilities, and help you turn ideas into "
     "practical results."
 )
 
+#: Type alias for assistant settings input.
+#:
+#: Can be a single BaseSettings instance, a dictionary, or a list of
+#: BaseSettings instances or dictionaries.
+AssistantSettingsInputType: TypeAlias = Union[
+    BaseSettings, dict[str, Any], list[BaseSettings | dict[str, Any]]
+]
 
-AssistantSettingsInputType = (
-    BaseSettings | dict[str, Any] | list[BaseSettings | dict[str, Any]]
-)
-AssistantAgentsInputType = list[
+#: Type alias for assistant agents input.
+#:
+#: A list of agent blueprints, agent configurations, dictionaries, or
+#: agent name strings.
+AssistantAgentsInputType: TypeAlias = list[
     AbstractAgentBlueprint | AgentConfig | dict[str, Any] | str
 ]
 
@@ -77,6 +91,29 @@ class Assistant(AbstractAssistant, TemplateResolver):
 
     Parameters
     ----------
+    storage : AbstractStorage or None, optional
+        Storage backend for persisting sessions and agent states.
+        Defaults to MemoryStorage.
+    default_settings : AssistantSettingsInputType or None, optional
+        Default settings for the assistant. Can be a single settings object,
+        a dictionary, or a list of settings objects/dictionaries.
+    session : SessionState, dict, str or None, optional
+        Initial session to load. Can be a SessionState object, a dictionary
+        to create one, a session ID string, or None to create a new session.
+    agents : AssistantAgentsInputType or None, optional
+        List of agent blueprints in format of :cls:`AbstractAgentBlueprint`,
+        :cls:`AgentConfig`, or a dict of parameters to register.
+    tool_pool : list of ToolBlueprintType or None, optional
+        Pool of tools and blueprints available to agents.
+    llm : LlmConfig, dict or None, optional
+        LLM configuration. If not provided, uses settings or agent
+        defaults. If no LLM procided at all, error occurs.
+    commands : list of BaseCommand subclasses or None, optional
+        Additional commands to register beyond defaults.
+    description : str, optional
+        Assistant description.
+    agent_blueprint : type of AbstractAgentBlueprint or None, optional
+        Custom agent blueprint class to use. Defaults to AgentBlueprint.
     """
 
     agent_blueprint = AgentBlueprint
@@ -88,7 +125,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
         default_settings: AssistantSettingsInputType | None = None,
         session: SessionState | dict[str, Any] | str | None = None,
         agents: AssistantAgentsInputType | None = None,
-        tool_pool: list[ToolType] | None = None,
+        tool_pool: list[ToolBlueprintType] | None = None,
         llm: LlmConfig | dict[str, Any] | None = None,
         commands: list[type[BaseCommand]] | None = None,
         description: str = DEFAULT_DESCRIPTION,
@@ -189,14 +226,25 @@ class Assistant(AbstractAssistant, TemplateResolver):
         return self._storage
 
     def prepare(self) -> None:
+        """Prepare the assistant for use.
+
+        Initializes the storage backend.
+        """
         self._storage.prepare()
 
     async def aprepare(self) -> None:
+        """Asynchronously prepare the assistant for use.
+
+        Initializes the storage backend asynchronously.
+        """
         await self._storage.aprepare()
 
     def cleanup(self) -> None:
-        """
-        It is highly recommended to call shutdown after usage
+        r"""Clean up the assistant resources.
+
+        Stores the current session and cleans up the storage backend.
+
+        It is highly recommended to call cleanup after usage.
 
         Examples
         --------
@@ -204,12 +252,17 @@ class Assistant(AbstractAssistant, TemplateResolver):
         >>> try:
         ...     # work with assistant
         ... finally:
-        ...     assistant.shutdown()
+        ...     assistant.cleanup()
         """
         self._store_session()
-        self._storage.cleanup
+        self._storage.cleanup()
 
     async def acleanup(self) -> None:
+        """Asynchronously clean up the assistant resources.
+
+        Stores the current session and cleans up the storage backend
+        asynchronously.
+        """
         self._store_session()
         await self._storage.acleanup()
 
@@ -223,18 +276,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
         | list[AgentCallbackHandler]
         | None = None,
     ) -> Generator[ActionRequest, ApprovalDecision, PromptResult]:
-        """
-        >>> processor = assistant.prompt_processor("List me the python files")
-        >>> try:
-        ...   action_req = next(processor)
-        ...   while True:
-        ...     action = input(action_req.description + "\napprove/reject? ")
-        ...     action_req = processor.send(ApprovalDecision(action))
-        ... except StopIteration as exc
-        ...     response = exc.value
-        >>> # process response LLM message, command output or error
-        """
-
+        # See :meth:`AbstractAssistant.prompt_processor` for full documentation.
         prompt = prompt.strip()
         self._session.input_count += 1
         self._session.history.append(prompt)
@@ -256,32 +298,7 @@ class Assistant(AbstractAssistant, TemplateResolver):
         | list[AgentCallbackHandler]
         | None = None,
     ) -> AsyncGenerator[ActionRequest | PromptResult, ApprovalDecision]:
-        """Process a user prompt and return the result.
-
-        If the prompt starts with ``/``, it is treated as a command and
-        dispatched to the command executor. Otherwise, the prompt is sent
-        to the current agent for LLM processing.
-
-        Parameters
-        ----------
-        prompt : str
-            The user's input text. Leading/trailing whitespace is stripped.
-
-        Returns
-        -------
-        PromptResult
-            The result of processing the prompt or command. This may be an
-            LLM's response, command output or an error.
-        Examples
-        --------
-        >>> processor = assistant.aprompt_processor("List me the python files")
-        >>> response = await anext(processor)
-        >>> while isinstance(response, ActionRequest):
-        ...   action = await async_input(response.description + "\napprove/reject? ")
-        ...   response = await processor.asend(ApprovalDecision(action))
-        >>> await processor.aclose()
-        >>> # process response message or error
-        """
+        # See :meth:`AbstractAssistant.aprompt_processor` for full documentation.
         prompt = prompt.strip()
         self._session.input_count += 1
         self._session.history.append(prompt)
@@ -305,11 +322,13 @@ class Assistant(AbstractAssistant, TemplateResolver):
 
     @property
     def session(self) -> SessionState:
+        # See :attr:`AbstractAssistant.session` for full documentation.
         return self._session
 
     def change_session(
         self, session: SessionState | dict[str, Any] | str | None = None
     ) -> None:
+        # See :meth:`AbstractAssistant.change_session` for full documentation.
         # TODO: if inputs
         self._store_session()
         if session is None:
@@ -343,30 +362,27 @@ class Assistant(AbstractAssistant, TemplateResolver):
 
     @property
     def available_agents(self) -> list[str]:
+        # See :attr:`AbstractAssistant.available_agents` for full documentation.
         return list(self.agent_blueprints)
 
     @property
     def current_agent(self) -> AbstractAgentRuntime:
+        # See :attr:`AbstractAssistant.current_agent` for full documentation.
         return self._get_current_agent()
 
     def change_agent(self, agent: str) -> None:
+        # See :meth:`AbstractAssistant.change_agent` for full documentation.
         self.current_agent_name = agent
 
     # Command management
 
     @property
     def commands(self) -> Mapping[str, BaseCommand]:
+        # See :attr:`AbstractAssistant.commands` for full documentation.
         return MappingProxyType(self._command_executor.commands)
 
     def register_commands(self, commands: list[type[BaseCommand]]) -> None:
-        """Register assistant commands
-
-        Parameters
-        ----------
-        commands : list[type[BaseCommand]]
-            A list of commands (subclasses of :class:`BaseCommand`) to
-            register for use as slash-commands.
-        """
+        # See :meth:`AbstractAssistant.register_commands` for full documentation.
         for command in commands:
             self._command_executor.register_command(command)
 
@@ -382,9 +398,8 @@ class Assistant(AbstractAssistant, TemplateResolver):
         Double braces (``{{`` and ``}}``) are preserved as literal braces
         (``{`` and ``}``) in the output.
 
-        Supported variables include ``{agent}``, ``{model}``,
-        ``{model_provider}``, ``{time:hm}``, ``{time:hms}``,
-        ``{date:md}``, and ``{date:ymd}``.
+        See the :doc:`template syntax documentation <../templates>`
+        for supported variables and formatting options.
 
         Parameters
         ----------
@@ -409,8 +424,9 @@ class Assistant(AbstractAssistant, TemplateResolver):
 
         return resolved.replace("\0", "{").replace("\1", "}")
 
+    # TemplateResolver interface implementation
+
     def resolve(self, var: str, fmt: str) -> str | None:
-        # implementing TemplateResolver.resolve
         return self._self_resolve(var, fmt)
 
     # PRIVATE METHODS
