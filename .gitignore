@@ -19,3 +19,7 @@ env/
 *.egg-info
 build/
 uv.lock
+
+# Sphinx
+doc/api
+doc/_build
