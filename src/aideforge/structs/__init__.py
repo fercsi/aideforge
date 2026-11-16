@@ -6,10 +6,9 @@ from .abc import (
     StructProxy,
 )
 from .agent import AgentConfig, Content, ContextConfig, ContextInfo
-from .common import Switch, ToolPolicy
 from .llm import LlmConfig
 from .mcp import McpServerConfig
 from .session import AgentState, SessionState
 from .settings import AssistantSettings, BaseSettings, UiSettings
 from .theme import ThemeColor, Theme
-from .tool import ToolModeConfig, ToolConfig
+from .tool import ToolModeConfig, ToolConfig, ToolPolicy

@@ -2,14 +2,14 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
+from aideforge.tools import ToolPolicy
 from .abc import BaseStruct
-from .common import ToolPolicy
 
 __all__ = ["ToolModeConfig", "ToolConfig"]
 
 
 class ToolModeConfig(BaseModel):
-    """
+    r"""
     Examples
     --------
     >>> class MyShellConfig(BaseModel):

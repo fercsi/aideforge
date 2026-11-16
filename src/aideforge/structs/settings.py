@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from aideforge.exceptions import DuplicateKeyError
 from .abc import BaseStruct
-from .common import Switch
 from .llm import LlmConfig
 from .theme import Theme, theme_collection
 
@@ -18,12 +17,17 @@ __all__ = [
     "AssistantSettings",
     "BaseSettings",
     "SettingsGroup",
+    "Switch",
+    "ThinkingOption",
     "UiSettings",
     "get_settings_type",
     "serializable_settings",
     "validate_settings",
 ]
 
+class Switch(StrEnum):
+    OFF = "off"
+    ON = "on"
 
 class ThinkingOption(StrEnum):
     OFF = "off"

@@ -121,7 +121,7 @@ class ChangeProperty(BaseEvent):
         )
 
     def change(self, struct: BaseIncrementalStruct):
-        """Changes the value of a struct
+        r"""Changes the value of a struct
 
         Use it to rebuild a structure.
 
@@ -130,8 +130,8 @@ class ChangeProperty(BaseEvent):
         struct : BaseIncrementalStruct
             The structure the property of which should be changed
 
-        Example
-        -------
+        Examples
+        --------
         >>> struct = original
         ... for event in event_list:
         ...   if event.type != "change-property":
@@ -162,7 +162,7 @@ class ChangeProperty(BaseEvent):
         *,
         change_type: PropertyChangeType = "replace",
     ):
-        """Create event from changing a property
+        r"""Create event from changing a property
 
         This class method changes the property, including adding the event to
         the ``events`` list and returns the event, so the caller can send it
@@ -181,8 +181,8 @@ class ChangeProperty(BaseEvent):
             Possible options: ``"replace"``, ``"append"``, ``"extend"``,
             ``"update"``, ``"add"``.
 
-        Example
-        -------
+        Examples
+        --------
         >>> event = ChangeProperty(self.session, "current_agent", "12345678")
         >>> self.storage.store_struct_increment(self.session, event)
         """

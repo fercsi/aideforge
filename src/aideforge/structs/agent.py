@@ -2,7 +2,7 @@ from typing import Any, ClassVar, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from .common import ToolPolicy
+from aideforge.tools import ToolPolicy
 from .llm import LlmConfig
 from .mcp import McpServerConfig
 from .tool import ToolConfig

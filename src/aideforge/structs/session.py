@@ -2,10 +2,9 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
+from aideforge.tools import ToolPolicy
 from aideforge.utils import IdType, create_id
 from .agent import AgentConfig, ContextInfo
-from .common import ToolPolicy
-
 from .abc import BaseStruct
 # from .event import SessionEvent
 from .llm import LlmConfig
