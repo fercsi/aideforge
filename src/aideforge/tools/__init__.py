@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable, TypeAlias, Union
 
 from langchain.tools import BaseTool
 from langchain_core.tools import StructuredTool
@@ -51,9 +51,11 @@ class ToolPolicy(StrEnum):
 
 
 ToolType = AgentToolProtocol | Callable[..., Any]
-ToolBlueprintType: TypeAlias = (
-    type[AgentToolProtocol] | PreconfiguredTool | Callable[..., Any]
-)
+
+#: Blueprint to prepare tools.
+ToolBlueprintType: TypeAlias = Union[
+    type[AgentToolProtocol], PreconfiguredTool, Callable
+]
 
 
 class _DescriptionMixin:

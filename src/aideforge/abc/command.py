@@ -117,7 +117,7 @@ class CommandArgumentParser(argparse.ArgumentParser):
 
 
 class BaseCommand:
-    """Base class for implementing slash-commands.
+    r"""Base class for implementing slash-commands.
 
     Subclasses must define the ``name`` and ``description`` class
     attributes, and may override :meth:`setup` to configure the

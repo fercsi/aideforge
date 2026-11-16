@@ -269,7 +269,7 @@ class Cli:
                 elif response.status == "output":
                     _color_print(colors.output, response.content, smart_end="\n")
                 elif response.status == "error":
-                    _color_print(colors.output_error, "\n".join(response.traceback))
+                    #_color_print(colors.output_error, "\n".join(response.traceback))
                     _color_print(colors.output_error, response.error_message)
                 elif response.status == "exit":
                     break

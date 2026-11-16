@@ -112,7 +112,7 @@ class AbstractAgentRuntime(ABC):
         thread_idx: int = 0,
         callbacks: AgentCallbackHandler | list[AgentCallbackHandler] | None = None,
     ) -> Generator[ActionRequest, ApprovalDecision, LlmResponse | LlmError]:
-        """Create a processor to process a user prompt and return the result.
+        r"""Create a processor to process a user prompt and return the result.
 
         .. warning::
            The method returns a Python *generator* that can request actions
@@ -172,7 +172,7 @@ class AbstractAgentRuntime(ABC):
     ) -> AsyncGenerator[
         ActionRequest | LlmResponse | LlmError, ApprovalDecision
     ]:
-        """Create an asynchronous processor to process a user prompt and
+        r"""Create an asynchronous processor to process a user prompt and
         return the result
 
         .. warning::

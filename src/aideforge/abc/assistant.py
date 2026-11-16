@@ -103,7 +103,7 @@ class AbstractAssistant(Lifecycle):
         | list[AgentCallbackHandler]
         | None = None,
     ) -> Generator[ActionRequest, ApprovalDecision, PromptResult]:
-        """Create a processor to process a user prompt and return the result.
+        r"""Create a processor to process a user prompt and return the result.
 
         If the prompt starts with ``/``, it is treated as a command and
         dispatched to the command executor. Otherwise, the prompt is sent
@@ -160,7 +160,7 @@ class AbstractAssistant(Lifecycle):
         | list[AgentCallbackHandler]
         | None = None,
     ) -> AsyncGenerator[ActionRequest | PromptResult, ApprovalDecision]:
-        """Create an asynchronous processor to process a user prompt and
+        r"""Create an asynchronous processor to process a user prompt and
         return the result
 
         If the prompt starts with ``/``, it is treated as a command and
