@@ -23,11 +23,16 @@ release = "1.0"
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
+    "sphinxcontrib.autodoc_pydantic",
 ]
 
 templates_path = ["_templates"]
+toc_object_entries_show_parents = "hide"
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
-
+napoleon_custom_sections = [["Class Metadata", "attributes"]]
+autodoc_pydantic_model_member_order = "bysource"
+autodoc_pydantic_model_summary_list_order = "bysource"
+autodoc_pydantic_field_doc_policy = "both"
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
