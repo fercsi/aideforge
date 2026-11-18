@@ -101,8 +101,8 @@ class Assistant(AbstractAssistant, TemplateResolver):
         Initial session to load. Can be a SessionState object, a dictionary
         to create one, a session ID string, or None to create a new session.
     agents : AssistantAgentsInputType or None, optional
-        List of agent blueprints in format of :cls:`AbstractAgentBlueprint`,
-        :cls:`AgentConfig`, or a dict of parameters to register.
+        List of agent blueprints in format of :class:`AbstractAgentBlueprint`,
+        :class:`AgentConfig`, or a dict of parameters to register.
     tool_pool : list of ToolBlueprintType or None, optional
         Pool of tools and blueprints available to agents.
     llm : LlmConfig, dict or None, optional

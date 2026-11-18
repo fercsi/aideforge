@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, cast, get_args
 
 from pydantic import BaseModel, Field
 
@@ -22,48 +22,64 @@ class BaseStruct(BaseModel):
     :class:`~aideforge.abc.storage.AbstractStorage` backend.  It carries a
     ``kind`` and ``version`` along with optional meta fields that control
     storage scoping and naming.
-
-    Attributes
-    ----------
-    kind : str
-        Logical category or group of the struct.
-    version : int
-        Schema version of the struct.
-
-    Meta information
-    ----------------
-    scope : ClassVar[Literal["global", "user"]]
-        Storage scope that determines visibility.  ``"global"`` structs
-        are shared across all users; ``"user"`` structs are isolated per
-        user. Default is ``"user"``.
-    storage_name : ClassVar[str]
-        Format string used to derive the default storage name.  It is
-        interpolated with the struct instance as the ``struct`` keyword
-        argument.
-    storage_mode : ClassVar[Literal["snapshot", "incremental"]]
-        Mode how object is stored. In case of ``"snapshot"`` (default)
-        object is always overwritten. If storage mode is ``"incremental"``
-        the original object is always preserved, and changes are added
-        incrementally.
-    kinds : ClassVar[str or None]
-        Sub-directory prefix for grouping related structs.  When ``None``,
-        structs are stored directly under the root search path.
     """
 
     # model_config = ConfigDict(validate_assignment=True)
 
-    kind: str
-    version: int
+    kind: str = Field(
+        ...,
+        description="Logical category or group of the struct.",
+    )
+    version: int = Field(
+        ...,
+        description="Schema version of the struct kind.",
+    )
 
     # Metadata
     scope: ClassVar[Literal["global", "user"]] = "user"
+    """*Model metadata*.
+    Storage scope that determines visibility.  ``"global"`` structs
+    are shared across all users; ``"user"`` structs are isolated per
+    user. Default is ``"user"``.
+    """
+
     storage_name: ClassVar[str] = "{struct.kind}"
+    """*Model metadata*.
+    Format string used to derive the default storage name.  It is
+    interpolated with the struct instance as the ``struct`` keyword
+    argument.
+    """
+
     storage_mode: ClassVar[Literal["snapshot", "incremental"]] = "snapshot"
+    """*Model metadata*.
+    Mode how object is stored. In case of ``"snapshot"`` (default)
+    object is always overwritten. If storage mode is ``"incremental"``
+    the original object is always preserved, and changes are added
+    incrementally.
+    """
+
     kinds: ClassVar[str | None] = None
+    """*Model metadata*.
+    Sub-directory prefix for grouping related structs.  When ``None``,
+    structs are stored directly under the root search path.
+    """
+
     type_fields: ClassVar[list[str]] = ["kind", "version"]
+    """*Model metadata*.
+    Contains field names which determine the structure type (non-data fields).
+    """
 
     @property
     def created_at(self) -> datetime:
+        """Return struct's creastion time.
+
+        AideForge IDs contain a timestamp. This property evaluates and returns
+        this timestamp in ``datetime.datetime`` format.
+
+        .. note::
+           This property is available only with structs having their own ID
+           of form ``<kind>_id``.
+        """
         prop_name = f"{self.kind}_id"
 
         id = cast(IdType, getattr(self, prop_name, None))
@@ -77,6 +93,8 @@ class BaseStruct(BaseModel):
 
 
 class BaseEvent(BaseStruct):
+    """Base model for all event sourcing items."""
+
     # For event sourcing
     kind: Literal["event"] = "event"
     version: Literal[1] = 1
@@ -84,7 +102,13 @@ class BaseEvent(BaseStruct):
         default_factory=lambda: create_id("event"),
         description="Unique identifier for the event",
     )
-    event_type: str
+    event_type: str = Field(
+        ...,
+        description=(
+            "Type of event item. Every event types has their own inherited "
+            "event struct"
+        ),
+    )
 
     # metadata
     storage_name: ClassVar[str] = "{struct.event_id}"
@@ -92,33 +116,67 @@ class BaseEvent(BaseStruct):
 
 
 class BaseIncrementalStruct(BaseStruct):
+    """Base model for all incremental persistent structs.
+
+    ``BaseIncrementalStruct`` structures are designed to hold continuously
+    growing information and events. Regularly saving these structures
+    becomes increasingly resource-intensive over time. Structures based on
+    this model contain initial/default values, while changes are stored
+    incrementally as events (``BaseEvent``) only.
+
+    This makes it possible to update the structure's contents using append
+    mode, even within a file.
+    """
+
     events: list[BaseEvent] = Field(
         default_factory=list,
-        description="Event list for event sourcing",
+        description=(
+            "List of events including the change property events. See also "
+            ":class:`ChangeProperty`."
+        ),
     )
 
     # Metadata
     storage_mode: ClassVar[Literal["incremental"]] = "incremental"
 
 
-PropertyChangeType = Literal["replace", "append", "extend", "update", "add"]
+PROPERTY_CHANGE_METHODS = ("replace", "append", "extend", "update", "add")
+PropertyChangeType = Literal[*PROPERTY_CHANGE_METHODS]
 
 
 class ChangeProperty(BaseEvent):
+    """Change property event for incremental storage
+
+    An event that captures changes to the parameters of structures based on
+    the :class:`BaseIncrementalStruct` model.
+
+    The event can be used in two ways.
+
+    The first is when changing a property. In this case, instead of
+    simply assigning a new value, we modify the structure using ``event
+    = ChangeProperty.from_changing(struct, property_name, new_value)``.
+    The resulting event is then stored using the storage object's
+    :meth:`~aideforge.abc.storage.AbstractStorage.store_struct_increment`
+    method. See :meth:`from_changing`
+
+    The second is when reading the structure
+    (``change_property_event.change(struct)``). We load the original
+    structure and then replay the events one by one to reconstruct its
+    current state. See :meth:`change`
+    """
+
     event_type: Literal["change-property"] = "change-property"
     change_type: PropertyChangeType = Field(
         default="replace",
-        description="The method how to change property.",
+        description=(
+            'The method how to change the property. Defaults to ``"replace"``. '
+            'Possible options: ``"replace"``, ``"append"``, ``"extend"``, '
+            '``"update"``, ``"add"``.'
+        ),
     )
     property_name: str = Field(..., description="Name of session property")
     old_value: Any = Field(default=None, description="Old value of property")
     new_value: Any = Field(..., description="New value of property")
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._change_types = get_args(
-            self.model_fields["change_type"].annotation
-        )
 
     def change(self, struct: BaseIncrementalStruct):
         r"""Changes the value of a struct
@@ -144,9 +202,9 @@ class ChangeProperty(BaseEvent):
             struct, prop
         )  # raises exception if property doesn't exist
 
-        if change_type == "replace":
+        if self.change_type == "replace":
             setattr(struct, prop, self.new_value)
-        elif change_type in self._change_types:
+        elif self.change_type in PROPERTY_CHANGE_METHODS:
             # Dynamically call the corresponding method on current_value
             # (e.g., append, extend, update)
             getattr(current_value, change_type)(new_value)
@@ -183,8 +241,8 @@ class ChangeProperty(BaseEvent):
 
         Examples
         --------
-        >>> event = ChangeProperty(self.session, "current_agent", "12345678")
-        >>> self.storage.store_struct_increment(self.session, event)
+        >>> event = ChangeProperty(session, "current_agent", "12345678")
+        >>> storage.store_struct_increment(session, event)
         """
         old_value = getattr(struct, property_name)  # raises exception
         event = ChangeProperty(
@@ -195,19 +253,36 @@ class ChangeProperty(BaseEvent):
         )
         event.change(struct)
         struct.events.append(event)
+        return event
+
 
 class StructProxy:
     """Internal proxy that makes a ``BaseStruct`` subclass behave like an
-    instance of its default values."""
+    instance of its default values.
+
+    For smaller structures, an object can be instantiated directly, but for
+    larger ones, using a proxy is particularly useful.
+
+    Parameters
+    ----------
+    target : type[BaseStruct]
+        The :class:`BaseStruct` subclass type to proxy.
+
+    Examples
+    --------
+    >>> class MyStruct(BaseStruct):
+    ...   kind : Literal["my-struct"] = "my-struct"
+    ...
+    >>> MyStruct.kind
+    Traceback (most recent call last):
+    ...
+    AttributeError: kind
+    >>> proxy = StructProxy(MyStruct)
+    >>> proxy.kind
+    'my-struct'
+    """
 
     def __init__(self, target: type[BaseStruct]) -> None:
-        """Initialize the proxy for a given struct class.
-
-        Parameters
-        ----------
-        target : type[BaseStruct]
-            The ``BaseStruct`` subclass to proxy.
-        """
         self._target = target
 
     def __getattr__(self, name: str) -> Any:

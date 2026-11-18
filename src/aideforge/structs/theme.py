@@ -1,12 +1,18 @@
-from typing import Any, ClassVar, Literal
+from __future__ import annotations
+
+from typing import Any, ClassVar, Literal, TypeAlias, Union
 
 from pydantic import BaseModel, Field
 
 from .abc import BaseStruct
 
 __all__ = [
-    "ThemeColor",
+    "ColorType",
+    "ColorValue",
     "Theme",
+    "ThemeColor",
+    "WebColorType",
+    "WebColorValue",
     "theme_collection",
     "to_term_color",
     "to_term_colors",
@@ -14,12 +20,47 @@ __all__ = [
     "to_web_colors",
 ]
 
-ColorValue = int | str | None
-ColorType = ColorValue | tuple[ColorValue, ColorValue]
-WebColorValue = str | None
-WebColorType = WebColorValue | tuple[WebColorValue, WebColorValue]
+ColorValue : TypeAlias = Union[int, str, None]
+"""Color value type.
 
+The color value can be an integer representing a color from the 16-color
+palette or the 256-color terminal palette, or a web-style hexadecimal color
+string (e.g. ``"#xxxxxx"``).
 
+If the value is None, the default color is used.
+"""
+
+ColorType : TypeAlias = Union[ColorValue, tuple[ColorValue, ColorValue]]
+"""Color type.
+
+Unlike ``ColorValue``, this value can specify both a foreground and a
+background color using a two-element tuple ``(fg, bg)``. Either element
+can be ``None``, indicating that the default color should be used for that
+component.
+
+If the value is not a ``tuple``, it must be a valid ``ColorValue`` and
+specifies only the foreground color. A value of ``value`` is equivalent to
+``(value, None)``.
+"""
+
+WebColorValue: TypeAlias = Union[str | None]
+"""Web color value type.
+
+Always a web-style hexadecimal color string (e.g. ``"#xxxxxx"``).
+"""
+
+WebColorType: TypeAlias = Union[WebColorValue | tuple[WebColorValue, WebColorValue]]
+"""Web color type.
+
+This value can specify both a foreground and a background color using a
+two-element tuple ``(fg, bg)``. Either element can be ``None``, indicating
+that the default color should be used for that component.
+
+If the value is not a ``tuple``, it must be a valid ``WebColorValue`` and
+specifies only the foreground color. A value of ``value`` is equivalent to
+``(value, None)``.
+"""
+ 
 class ThemeColor(BaseModel):
     """Color configuration for different parts of the terminal interface.
 
@@ -33,23 +74,23 @@ class ThemeColor(BaseModel):
 
     Attributes
     ----------
-    prompt_string : ColorType, optional
+    prompt_string : :type:`ColorType`, optional
         Color for the prompt string.
-    input : ColorType, optional
+    input : :type:`ColorType`, optional
         Color for user input text/prompt.
-    thinking : ColorType, optional
+    thinking : :type:`ColorType`, optional
         Color for the assistant's thinking output.
-    thinking_em : ColorType, optional
+    thinking_em : :type:`ColorType`, optional
         Color for emphasized thinking text.
-    response : ColorType, optional
+    response : :type:`ColorType`, optional
         Color for the assistant's response text.
-    output : ColorType, optional
+    output : :type:`ColorType`, optional
         Color for general output (e.g. command) text.
-    output_error : ColorType, optional
+    output_error : :type:`ColorType`, optional
         Color for error output text.
-    warning : ColorType, optional
+    warning : :type:`ColorType`, optional
         Color for application level warning messages.
-    error : ColorType, optional
+    error : :type:`ColorType`, optional
         Color for application level error messages.
     """
     # Default values must be always None!
