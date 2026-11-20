@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import readline
+import signal
 import sys
 from functools import partial
 from typing import Any, Callable, cast
@@ -35,17 +36,17 @@ class CliCallbackHandler(AgentCallbackHandler, BaseCallbackHandler):
 
     Parameters
     ----------
-    theme : Theme
-        The theme providing color definitions for terminal output.
+    shared : _Shared
+        Shared state containing theme colors and UI settings.
     """
 
     def __init__(self, shared: _Shared) -> None:
-        """Initialize the callback handler with a theme.
+        """Initialize the callback handler with shared state.
 
         Parameters
         ----------
-        theme : Theme
-            The theme providing color definitions for terminal output.
+        shared : _Shared
+            Shared state containing theme colors and UI settings.
         """
         super().__init__()
         self._shared = shared
@@ -132,13 +133,9 @@ class Cli:
     ----------
     assistant : Assistant
         The assistant instance used to process prompts and commands.
-    theme : Theme, optional
-        The theme for terminal colors and prompt strings, by default
-        :class:`DefaultTheme`.
-    history_config : HistoryConfig, optional
-        Configuration for command history persistence, by default
-        :class:`HistoryConfig`.
-    callback_handler : Type[BaseCallbackHandler], optional
+    default_settings : UiSettings, dict[str, Any] or None, optional
+        Default UI settings for the assistant, by default UiSettings().
+    callback_handler : type[BaseCallbackHandler], optional
         The callback handler class to use for observing LLM execution,
         by default :class:`CliCallbackHandler`.
     """
@@ -150,22 +147,6 @@ class Cli:
         default_settings: UiSettings|dict[str,Any]|None=None,
         callback_handler: type[BaseCallbackHandler] = CliCallbackHandler,
     ) -> None:
-        """Initialize the CLI with an assistant and configuration.
-
-        Parameters
-        ----------
-        assistant : Assistant
-            The assistant instance used to process prompts and commands.
-        theme : Theme, optional
-            The theme for terminal colors and prompt strings, by default
-            :class:`DefaultTheme`.
-        history_config : HistoryConfig, optional
-            Configuration for command history persistence, by default
-            :class:`HistoryConfig`.
-        callback_handler : Type[BaseCallbackHandler], optional
-            The callback handler class to use for observing LLM execution,
-            by default :class:`CliCallbackHandler`.
-        """
         default_settings = default_settings or UiSettings()
         self._shared=_Shared()
         self._assistant = assistant
@@ -176,8 +157,18 @@ class Cli:
         self._assistant.settings.register(default_settings, ignore_failure=True)
 
     def process_arguments(self, args: list[str] | None = None, *, custom_parser:Callable[[argparse.ArgumentParser], None]|None=None) -> None:
-        # Call this function if you would like to use default argument parsing
-        # this function is not called automatically
+        """Parse command-line arguments for the CLI.
+
+        Call this function if you would like to use default argument parsing.
+        This function is not called automatically.
+
+        Parameters
+        ----------
+        args : list[str] or None, optional
+            Command-line arguments to parse. Defaults to ``sys.argv``.
+        custom_parser : Callable[[argparse.ArgumentParser], None] or None, optional
+            Optional function to add custom arguments to the parser.
+        """
         args = args or sys.argv
         parser = argparse.ArgumentParser(
             description=self._assistant.description
@@ -194,6 +185,13 @@ class Cli:
             self._assistant.change_session(self._opts.session)
 
     def run(self) -> None:
+        """Run the synchronous CLI loop.
+
+        Raises
+        ------
+        NotImplementedError
+            This method is not yet implemented.
+        """
         raise NotImplementedError("Synchron CLI run has not been implemented, yet")
 
     async def arun(self) -> None:
@@ -206,12 +204,14 @@ class Cli:
         The loop terminates on ``EOFError``, ``KeyboardInterrupt``, or
         when the assistant returns an ``"exit"`` status.
         """
+        # Disable Ctrl+C
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGINT, lambda: None)
+
         assistant = self._assistant
         await assistant.aprepare()
         session = assistant.session
         settings = assistant.settings
-
-        print(assistant.settings.get_options())
 
         ui_settings = assistant.settings.ui
         assert isinstance(ui_settings, UiSettings), f"Expected UiSettings, got {type(ui_settings).__name__}"
@@ -246,7 +246,8 @@ class Cli:
                 try:
                     query = await ainput("")
                     query = query.strip()
-                except (EOFError, KeyboardInterrupt):
+                # except (EOFError, KeyboardInterrupt):
+                except EOFError:
                     break
                 _reset_color(colors.input)
 
@@ -282,6 +283,18 @@ class Cli:
             print(f"\nSession {assistant.session.session_id} has ended.")
 
     def _action_input(self, request: ActionRequest) -> ApprovalDecision:
+        """Prompt the user for approval of a tool action.
+
+        Parameters
+        ----------
+        request : ActionRequest
+            The action request containing tool name and arguments.
+
+        Returns
+        -------
+        ApprovalDecision
+            The user's approval decision.
+        """
         colors = self._shared.colors
         display = self._shared.ui_settings.display
         extension = PsActionResolver(request)
@@ -303,6 +316,18 @@ class Cli:
             _color_print(colors.tool_prompt_string, ps_err, end="")
 
     async def _aaction_input(self, request: ActionRequest) -> ApprovalDecision:
+        """Prompt the user asynchronously for approval of a tool action.
+
+        Parameters
+        ----------
+        request : ActionRequest
+            The action request containing tool name and arguments.
+
+        Returns
+        -------
+        ApprovalDecision
+            The user's approval decision.
+        """
         colors = self._shared.colors
         display = self._shared.ui_settings.display
         extension = PsActionResolver(request)
