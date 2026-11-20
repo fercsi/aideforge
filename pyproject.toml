@@ -52,12 +52,10 @@ line-length = 80
 target-version = ['py311']
 quiet = true
 
-#dev = [
-#    "autodoc-pydantic>=2.2.0",
-#    "sphinx>=9.0.4",
-#]
 [dependency-groups]
-dev = [
+docs = [
     "autodoc-pydantic>=2.2.0",
+    "enum-tools>=0.13.0",
     "sphinx>=8,<9",
+    "sphinx-toolbox>=4.3.1",
 ]
