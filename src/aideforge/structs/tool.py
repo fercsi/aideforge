@@ -74,7 +74,6 @@ class ToolConfig(BaseStruct, ToolModeConfig):
         default=1,
         description="Schema version.",
     )
-    name: str = Field(..., description="Unique name identifying the tool.")
 
     # Metadata
     scope: ClassVar[Literal["global"]] = "global"
