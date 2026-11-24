@@ -130,7 +130,7 @@ class DisplaySettings(BaseModel):
     """Display and prompt configuration for the CLI."""
 
     prompt_string: str = Field(
-        default="@[{agent}]> ",
+        default="@\\[{agent}]> ",
         description="Template for the prompt string with {agent} and {model} placeholders.",
     )
     tool_prompt_string: str = Field(

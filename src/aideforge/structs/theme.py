@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any, ClassVar, Literal, TypeAlias, Union
 
 from pydantic import BaseModel, Field
@@ -60,57 +61,70 @@ If the value is not a ``tuple``, it must be a valid ``WebColorValue`` and
 specifies only the foreground color. A value of ``value`` is equivalent to
 ``(value, None)``.
 """
- 
-class ThemeColor(BaseModel):
-    """Color configuration for different parts of the terminal interface.
 
-    Each attribute accepts a number (0..255 for 16 or 256-color palette),
+class DecorationType(StrEnum):
+    UNDERLINE = "underline"
+    OVERLINE = "overline"
+    LINE_THROUGH = "line-through"
+    DOUBLE_LINE = "double-line"
+
+class TextStyle(BaseModel):
+    """
+    Colors: Each attribute accepts a number (0..255 for 16 or 256-color palette),
     an ANSI color string (``"#rrggbb"`` format), or ``None`` for no color.
     A tuple pairs a foreground color with a background color, single value
     refers to a forground color (like ``(color, None)``).
+    """
 
-    Note: ``ThemeColor`` with default values can be used also for converted
-    color set (see also ``to_term_colors``, ``to_web_colors``)
+    color: int | str | None = None
+    bgcolor: int | str | None = None
+    bold: bool | None = None
+    italic: bool | None = None
+    decoration: DecorationType | None = None
+    custom: dict[str, dict[str, Any]] | None = None
+ 
+class TextStyles(BaseModel):
+    """Text style configuration for different parts of the terminal interface.
 
     Attributes
     ----------
-    prompt_string : :type:`ColorType`, optional
-        Color for the prompt string.
-    input : :type:`ColorType`, optional
-        Color for user input text/prompt.
-    thinking : :type:`ColorType`, optional
-        Color for the assistant's thinking output.
-    thinking_em : :type:`ColorType`, optional
-        Color for emphasized thinking text.
-    response : :type:`ColorType`, optional
-        Color for the assistant's response text.
-    output : :type:`ColorType`, optional
-        Color for general output (e.g. command) text.
-    output_error : :type:`ColorType`, optional
-        Color for error output text.
-    warning : :type:`ColorType`, optional
-        Color for application level warning messages.
-    error : :type:`ColorType`, optional
-        Color for application level error messages.
+    prompt_string : :type:`TextStyle`, optional
+        Style for the prompt string.
+    input : :type:`TextStyle`, optional
+        Style for user input text/prompt.
+    thinking : :type:`TextStyle`, optional
+        Style for the assistant's thinking output.
+    thinking_em : :type:`TextStyle`, optional
+        Style for emphasized thinking text.
+    response : :type:`TextStyle`, optional
+        Style for the assistant's response text.
+    output : :type:`TextStyle`, optional
+        Style for general output (e.g. command) text.
+    output_error : :type:`TextStyle`, optional
+        Style for error output text.
+    warning : :type:`TextStyle`, optional
+        Style for application level warning messages.
+    error : :type:`TextStyle`, optional
+        Style for application level error messages.
     """
     # Default values must be always None!
 
     # Input
-    prompt_string: ColorType = None
-    tool_prompt_string: ColorType = None
-    input: ColorType = None
-    tool_input: ColorType = None
+    prompt_string: TextStyle | None = None
+    tool_prompt_string: TextStyle | None = None
+    input: TextStyle | None = None
+    tool_input: TextStyle | None = None
     # Assistant
-    welcome_message: ColorType = None
-    thinking: ColorType = None
-    thinking_em: ColorType = None
-    response: ColorType = None
+    welcome_message: TextStyle | None = None
+    thinking: TextStyle | None = None
+    thinking_em: TextStyle | None = None
+    response: TextStyle | None = None
     # Output
-    output: ColorType = None
-    output_error: ColorType = None
+    output: TextStyle | None = None
+    output_error: TextStyle | None = None
     # Application
-    warning: ColorType = None
-    error: ColorType = None
+    warning: TextStyle | None = None
+    error: TextStyle | None = None
 
 
 class Theme(BaseStruct):
@@ -135,7 +149,10 @@ class Theme(BaseStruct):
     kind: Literal["theme"] = "theme"
     version: Literal[1] = 1
     name: str = Field(..., description="Name of the theme to identify with")
-    colors: ThemeColor = Field(default_factory=ThemeColor)
+    text_styles: TextStyles = Field(
+        default_factory = TextStyles,
+        description="",
+    )
     # TODO: fonts, borders, styles... for web maybe Annotated of WebTheme/CliTheme
 
     # Metadata
@@ -147,19 +164,19 @@ class Theme(BaseStruct):
 theme_collection: dict[str, Theme] = {
     "default": Theme(
         name="default",
-        colors={
-            "welcome_message": 11,
-            "tool_prompt_string": 14,
-            "thinking": 8,
-            "thinking_em": 7,
-            "response": 11,
-            "output_error": 15,
-            "error": 9,
+        text_styles={
+            "welcome_message": {"color":"bright_yellow"},
+            "tool_prompt_string": {"color":"bright_cyan"},
+            "thinking": {"color":"bright_black"},
+            "thinking_em": {"color":"white"},
+            "response": {"color":"bright_yellow"},
+            "output_error": {"color":"bright_white"},
+            "error": {"color":"bright_red"},
         },
     ),
     "monochrome": Theme(
         name="monochrome",
-        colors={},
+        text_styles={},
     ),
 }
 

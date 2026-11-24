@@ -10,21 +10,26 @@ import signal
 import sys
 from functools import partial
 from typing import Any, Callable, cast
+from dataclasses import dataclass
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 from pydantic import BaseModel, Field
 
 from aideforge.abc.callback import AgentCallbackHandler
+from aideforge.abc.terminal import Terminal
 from aideforge.agent import ActionRequest, ApprovalDecision
 from aideforge.assistant import Assistant, TemplateResolver
 from aideforge.structs.settings import AssistantSettings, UiSettings
-from aideforge.structs.theme import Theme, ThemeColor, to_term_colors
+from aideforge.structs.theme import Theme#, ThemeColor, to_term_colors
+from aideforge.terminal.rich import RichTerminal
 
 __all__ = ["Cli", "CliCallbackHandler"]
 
-class _Shared(BaseModel):
-    colors: ThemeColor = Field(default_factory=ThemeColor)
+@dataclass
+class _Shared:
+#>    colors: ThemeColor = Field(default_factory=ThemeColor)
+    terminal: Terminal | None = None
     ui_settings: UiSettings = Field(default_factory=UiSettings)
 
 
@@ -146,6 +151,7 @@ class Cli:
         assistant: Assistant,
         default_settings: UiSettings|dict[str,Any]|None=None,
         callback_handler: type[BaseCallbackHandler] = CliCallbackHandler,
+        terminal: Terminal | None = None
     ) -> None:
         default_settings = default_settings or UiSettings()
         self._shared=_Shared()
@@ -155,6 +161,7 @@ class Cli:
         self._callbacks = callback_handler(shared=self._shared)
         # Don't override already loaded UI settings only ensure if it does not exist
         self._assistant.settings.register(default_settings, ignore_failure=True)
+        self._terminal = terminal or RichTerminal()
 
     def process_arguments(self, args: list[str] | None = None, *, custom_parser:Callable[[argparse.ArgumentParser], None]|None=None) -> None:
         """Parse command-line arguments for the CLI.
@@ -218,38 +225,32 @@ class Cli:
         assistant_settings = assistant.settings.assistant
         assert isinstance(assistant_settings, AssistantSettings), f"Expected AssistantSettings, got {type(assistant_settings).__name__}"
 
+        terminal = self._terminal
+
         theme = settings.get_theme()
-        colors = to_term_colors(theme.colors)
-        hist_size = assistant_settings.history.size
+        terminal.set_theme(theme)
+#>        hist_size = assistant_settings.history.size
         prompt_string = ui_settings.display.prompt_string
 
         self._shared.ui_settings = ui_settings
-        self._shared.colors = colors
+        self._shared.terminal = self._terminal
 
-        readline.clear_history()
         history = assistant.session.history
-        if hist_size is not None:
-            readline.set_history_length(hist_size)
-        for item in history:
-            readline.add_history(item)
-        readline.set_auto_history(True)
+        terminal.set_history(history)
 
         welcome = assistant.current_agent.state.config.welcome_message
         if welcome:
-            _color_print(colors.welcome_message, welcome)
+            terminal.print(welcome, style="welcome_message")
 
         try:
             while True:
                 ps_text = assistant.render_template(prompt_string)
-                _color_print(colors.prompt_string, ps_text, end="")
-                _set_color(colors.input)
                 try:
-                    query = await ainput("")
+                    query = await terminal.ainput(ps_text, style="prompt_string")
                     query = query.strip()
                 # except (EOFError, KeyboardInterrupt):
                 except EOFError:
                     break
-                _reset_color(colors.input)
 
                 if not query:
                     continue
@@ -262,16 +263,15 @@ class Cli:
                 await processor.aclose()
 
                 if response.status == "response":
-                    _color_print(
-                        colors.response, response.content, smart_end="\n"
+                    terminal.print(
+                        response.content, smart_end="\n", style="response",
                     )
                 elif response.status == "ok":
                     pass
                 elif response.status == "output":
-                    _color_print(colors.output, response.content, smart_end="\n")
+                    terminal.print(response.content, smart_end="\n", style="output")
                 elif response.status == "error":
-                    #_color_print(colors.output_error, "\n".join(response.traceback))
-                    _color_print(colors.output_error, response.error_message)
+                    terminal.print(response.error_message, style="output_error")
                 elif response.status == "exit":
                     break
                 else:
@@ -400,82 +400,3 @@ def _eval_answer(answer: str) -> ApprovalDecision | None:
     if answer in ("yatfr", "yesallforrun", "yestoalltoolsforrun"):
         return ApprovalDecision.APPROVE_ALL_TOOLS_FOR_RUN
     return None
-
-
-
-
-
-def _color_print(
-    color: str|None,
-    *args: Any,
-    smart_end: str | None = None,
-    max_lines: int | None = None,
-    indent: int = 0,
-    **kwargs: Any,
-) -> None:
-    """Print text to the terminal with an optional color prefix.
-
-    Parameters
-    ----------
-    color : str or None
-        The ANSI escape sequence for the desired color. Pass an empty string
-        for no color.
-    *args : Any
-        Positional arguments passed to :func:`print`.
-    smart_end : str or None, optional
-        If provided, appends this string to the output only if the last
-        positional argument does not already end with it, by default
-        ``None``.
-    max_lines : int or None, optional
-        If provided, truncates the output to this many lines, by default
-        ``None``. (Currently unused — reserved for future use.)
-    indent : int, optional
-        Number of two-space indentation units to add, by default ``0``.
-        (Currently unused — reserved for future use.)
-    **kwargs : Any
-        Additional keyword arguments passed to :func:`print`.
-
-    Notes
-    -----
-    The color escape sequence is printed before the content and reset
-    after, unless *color* is an empty string.
-    """
-    color = color or ""
-    if smart_end:
-        if not isinstance(args[-1], str) or not args[-1].endswith(smart_end):
-            kwargs["end"] = smart_end
-        else:
-            kwargs["end"] = ""
-    print(color, end="")
-    print(*args, **kwargs)
-    if color != "":
-        print("\x1b[0m", end="")
-
-
-def _set_color(color: str|None) -> None:
-    """Print a color escape sequence without a newline.
-
-    Parameters
-    ----------
-    color : str or None
-        The ANSI escape sequence to print. If empty, nothing is printed.
-    """
-    if color:
-        print(color, end="")
-
-
-def _reset_color(color: str|None) -> None:
-    """Reset the terminal color if a color was previously set.
-
-    Parameters
-    ----------
-    color : str or None
-        The color escape sequence that was previously set. If non-empty,
-        the ANSI reset sequence is printed.
-    """
-    if color:  # not None or ""
-        print("\x1b[0m", end="")
-
-
-async def ainput(prompt: str) -> str:
-    return await asyncio.to_thread(input, prompt)

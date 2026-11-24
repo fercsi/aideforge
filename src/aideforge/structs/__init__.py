@@ -10,5 +10,5 @@ from .llm import LlmConfig
 from .mcp import McpServerConfig
 from .session import AgentState, SessionState
 from .settings import AssistantSettings, BaseSettings, UiSettings
-from .theme import ThemeColor, Theme
+from .theme import TextStyle, Theme
 from .tool import ToolModeConfig, ToolConfig, ToolPolicy
