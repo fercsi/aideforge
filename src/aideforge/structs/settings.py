@@ -25,10 +25,6 @@ __all__ = [
     "validate_settings",
 ]
 
-class Switch(StrEnum):
-    OFF = "off"
-    ON = "on"
-
 class ThinkingOption(StrEnum):
     """Thinking options.
 
@@ -154,6 +150,10 @@ class DisplaySettings(BaseModel):
     thinking: ThinkingOption = Field(
         default=ThinkingOption.OFF,
         description="Controls thinking output display mode (see :class:`ThinkingOption`).",
+    )
+    show_warnings: bool = Field(
+        default=False,
+        description="Controls if warnings are displayed or not.",
     )
 
 

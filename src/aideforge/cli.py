@@ -10,7 +10,7 @@ import signal
 import sys
 from functools import partial
 from typing import Any, Callable, cast
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
@@ -20,7 +20,7 @@ from aideforge.abc.callback import AgentCallbackHandler
 from aideforge.abc.terminal import Terminal
 from aideforge.agent import ActionRequest, ApprovalDecision
 from aideforge.assistant import Assistant, TemplateResolver
-from aideforge.structs.settings import AssistantSettings, UiSettings
+from aideforge.structs.settings import AssistantSettings, UiSettings, SettingsGroup, ThinkingOption
 from aideforge.structs.theme import Theme#, ThemeColor, to_term_colors
 from aideforge.terminal.rich import RichTerminal
 
@@ -28,9 +28,8 @@ __all__ = ["Cli", "CliCallbackHandler"]
 
 @dataclass
 class _Shared:
-#>    colors: ThemeColor = Field(default_factory=ThemeColor)
     terminal: Terminal | None = None
-    ui_settings: UiSettings = Field(default_factory=UiSettings)
+    settings: SettingsGroup = field(default_factory=SettingsGroup)
 
 
 class CliCallbackHandler(AgentCallbackHandler, BaseCallbackHandler):
@@ -44,6 +43,12 @@ class CliCallbackHandler(AgentCallbackHandler, BaseCallbackHandler):
     shared : _Shared
         Shared state containing theme colors and UI settings.
     """
+#>    OFF = "off"
+#>    TEXT = "text"
+#>    TOOL = "tool"
+#>    ALL = "all"
+#>    DETAILS = "details"
+#>    settings["display.thinking
 
     def __init__(self, shared: _Shared) -> None:
         """Initialize the callback handler with shared state.
@@ -70,21 +75,35 @@ class CliCallbackHandler(AgentCallbackHandler, BaseCallbackHandler):
         **kwargs : Any
             Additional keyword arguments passed by the callback framework.
         """
-        color = self._shared.colors.thinking
-        color_em = self._shared.colors.thinking_em
-        assert len(response.generations) > 0, "on_llm_end: Response does not have generations"
-        for gen in response.generations[0]:  # currently, no multiple prompts
-            # there won't be multiple response variants, but who knows
-            msg = gen.message
-#>            _color_print(color_em, f"[{msg.id}] {type(msg).__name__}")
-#>            akwa = getattr(msg, "additional_kwargs", {})
-#>            if "reasoning_content" in akwa:
-#>                _color_print(color, f"  Reasoning: {akwa['reasoning_content']}")
-            if msg.tool_calls:
-                _color_print(color, "  Tool calls:")
-            for tc in msg.tool_calls:
-                args = ", ".join(f"{k}={v!r}" for k, v in tc["args"].items())
-                _color_print(color, f"    [{tc['id']}] {tc['name']}({args})")
+        try:
+            thinking = self._shared.settings["display.thinking"]
+            if thinking == ThinkingOption.OFF:
+                return
+            terminal = self._shared.terminal
+            assert terminal is not None, "on_llm_end: terminal has not been initialized."
+            show_text = thinking in (ThinkingOption.TEXT, ThinkingOption.ALL, ThinkingOption.DETAILS)
+            show_tool = thinking in (ThinkingOption.TOOL, ThinkingOption.ALL, ThinkingOption.DETAILS)
+            show_details = thinking == ThinkingOption.DETAILS
+
+            assert len(response.generations) > 0, "on_llm_end: Response does not have generations."
+            for gen in response.generations[0]:  # currently, no multiple prompts
+                # there won't be multiple response variants, but who knows
+                terminal.print()
+                msg = gen.message
+                if show_details:
+                    terminal.print(f"{type(msg).__name__} <{msg.id}>", style="llm_id")
+                if show_text:
+                    akwa = getattr(msg, "additional_kwargs", {})
+                    if "reasoning_content" in akwa:
+                        terminal.print(f"Thinking: {akwa['reasoning_content']}", style="llm_thinking")
+                if show_tool and msg.tool_calls:
+                    terminal.print("Tool calls:", style="llm_tool_call")
+                    for tc in msg.tool_calls:
+                        args = ", ".join(f"{k}={v!r}" for k, v in tc["args"].items())
+                        idtxt = f"[{tc['id']}] " if show_details else ""
+                        terminal.print(f"  {idtxt}{tc['name']}({args})", style="llm_tool_call")
+        except Exception as exc:
+            print(exc)
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> None:
         """Handle the end-of-tool-execution event by printing colorized output.
@@ -98,14 +117,30 @@ class CliCallbackHandler(AgentCallbackHandler, BaseCallbackHandler):
         **kwargs : Any
             Additional keyword arguments passed by the callback framework.
         """
-        return
-        color = self._shared.colors.thinking
-        color_em = self._shared.colors.thinking_em
-        _color_print(
-            color_em,
-            f"[{output.tool_call_id}] {type(output).__name__} -> {output.name}",
+        thinking = self._shared.settings["display.thinking"]
+        if thinking != ThinkingOption.DETAILS:
+            return
+        terminal = self._shared.terminal
+        assert terminal is not None, "on_tool_end: terminal has not been initialized."
+        terminal.print()
+        terminal.print(
+            f"{type(output).__name__} <{output.tool_call_id}>",
+            style="llm_id",
         )
-        _color_print(color, output.content, max_lines=3, indent=2)
+        terminal.print(
+            f"Output of {output.name}:",
+            style="llm_tool_output",
+        )
+        content = output.content
+        if not isinstance(content, str):
+            content = json.dumps(content)
+        maxlen = terminal.width * 3 - 1
+        if len(content) > maxlen:
+            content = content[:maxlen-3] + "..."
+        lines = content.split("\n", 3)
+        if len(lines) > 3:
+            content = "\n".join(lines[:3]) + "\n..."
+        terminal.print(content, style="llm_tool_output")
 
     def on_llm_error(self, exception: BaseException, **kwargs: Any) -> None:
         """Handle LLM errors by printing the exception and context.
@@ -117,15 +152,20 @@ class CliCallbackHandler(AgentCallbackHandler, BaseCallbackHandler):
         **kwargs : Any
             Additional keyword arguments passed by the callback framework.
         """
-        return
-        print(exception)
-        print(kwargs)
+        # Traceback settings?
+        # kwargs?
+        terminal = self._shared.terminal
+        assert terminal is not None, "on_llm_error: terminal has not been initialized."
+        terminal.print(f"LLM ERROR: {exception}", style="warning")
 
     # AgentCallbackHandler callbacks
 
     def on_warning(self, content: str) -> None:
-        # TODO colorize
-        print(f"WARNING: {content}")
+        if not self._shared.settings["display.show_warnings"]:
+            return
+        terminal = self._shared.terminal
+        assert terminal is not None, "on_warning: terminal has not been initialized."
+        terminal.print(f"WARNING: {content}", style="warning")
 
 
 class Cli:
@@ -232,7 +272,7 @@ class Cli:
 #>        hist_size = assistant_settings.history.size
         prompt_string = ui_settings.display.prompt_string
 
-        self._shared.ui_settings = ui_settings
+        self._shared.settings = settings
         self._shared.terminal = self._terminal
 
         history = assistant.session.history

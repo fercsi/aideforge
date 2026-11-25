@@ -2,11 +2,12 @@ import readline
 import sys
 from typing import Any, Literal, TypeVar
 
-from rich.style import Style as RichStyle
-from rich.theme import Theme as RichTheme, ThemeStackError
+
+from rich import errors, markup
 from rich.color import Color as RichColor
 from rich.console import Console as RichConsole
-
+from rich.style import Style as RichStyle
+from rich.theme import Theme as RichTheme, ThemeStackError
 from aideforge.abc.terminal import Terminal
 from aideforge.structs.theme import TextStyle, Theme
 
@@ -22,6 +23,7 @@ class RichTerminal(RichConsole, Terminal):
         ] = "auto",
         theme: Theme | None = None,
         history: list[str] | None = None,
+        use_markup: bool = False,
     ) -> None:
         # Rich theme is stacked. We use a single theme always, replacable
         # So set empty theme to the bottom
@@ -34,6 +36,7 @@ class RichTerminal(RichConsole, Terminal):
             self.set_theme(theme)
         if history is not None:
             self.set_history(history)
+        self._use_markup = use_markup
 
     def set_history(self, history: list[str]) -> None:
         readline.clear_history()
@@ -50,8 +53,22 @@ class RichTerminal(RichConsole, Terminal):
         self.push_theme(rich_theme)
 
     def input(self, prompt: str, *, style: str | None = None, **kwargs) -> str:
+        use_markup = kwargs.setdefault("markup", self._use_markup)
+        if not use_markup:
+            prompt = markup.escape(prompt)
+        kwargs["markup"] = True
         if style is not None:
             prompt = f"[{style}]{prompt}[/{style}]"
+        if style is not None and isinstance(style, str):
+            style_names = style.split()
+            for name in style_names:
+                try:
+                    self.get_style(name)
+                except errors.MissingStyle:
+                    raise errors.MissingStyle(f"Failed to get style '{name}'") from None
+            style_start = "".join(f"[{n}]" for n in style_names)
+            style_end = "[/]" * len(style_names)
+            prompt = style_start + prompt + style_end
         return RichConsole.input(self, prompt)
 
     def print(self, *args, smart_end: str | None = None, **kwargs) -> None:
@@ -62,12 +79,32 @@ class RichTerminal(RichConsole, Terminal):
                 kwargs["end"] = smart_end
             else:
                 kwargs["end"] = ""
+        kwargs.setdefault("markup", self._use_markup)
+        kwargs.setdefault("highlight", False)
+        style = kwargs.get("style")
+        if style is not None and isinstance(style, str):
+            style_names = style.split()
+            styles = []
+            for name in style_names:
+                try:
+                    styles.append(self.get_style(name))
+                except errors.MissingStyle:
+                    raise errors.MissingStyle(f"Failed to get style '{name}'") from None
+            style = styles[0]
+            for s in styles[1:]:
+                style = style + s
+            kwargs["style"] = style
+
         RichConsole.print(self, *args, **kwargs)
 
 
 def _to_rich_theme(theme: Theme) -> RichTheme:
     styles = theme.text_styles
-    rich_styles = {}
+    rich_styles = { # some basic style components
+        "bold": RichStyle(bold=True),
+        "italic": RichStyle(italic=True),
+        "underline": RichStyle(underline=True),
+    }
     for name in type(styles).model_fields:
         style = getattr(styles, name)
         if style is not None:

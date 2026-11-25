@@ -116,8 +116,10 @@ class TextStyles(BaseModel):
     tool_input: TextStyle | None = None
     # Assistant
     welcome_message: TextStyle | None = None
-    thinking: TextStyle | None = None
-    thinking_em: TextStyle | None = None
+    llm_thinking: TextStyle | None = None
+    llm_id: TextStyle | None = None
+    llm_tool_call: TextStyle | None = None
+    llm_tool_output: TextStyle | None = None
     response: TextStyle | None = None
     # Output
     output: TextStyle | None = None
@@ -167,8 +169,10 @@ theme_collection: dict[str, Theme] = {
         text_styles={
             "welcome_message": {"color":"bright_yellow"},
             "tool_prompt_string": {"color":"bright_cyan"},
-            "thinking": {"color":"bright_black"},
-            "thinking_em": {"color":"white"},
+            "llm_id": {"color":"white"},
+            "llm_thinking": {"color":"bright_black"},
+            "llm_tool_call": {"color":"cyan"},
+            "llm_tool_output": {"color":"cyan"},
             "response": {"color":"bright_yellow"},
             "output_error": {"color":"bright_white"},
             "error": {"color":"bright_red"},
