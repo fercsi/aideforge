@@ -44,13 +44,13 @@ specifies only the foreground color. A value of ``value`` is equivalent to
 ``(value, None)``.
 """
 
-WebColorValue: TypeAlias = Union[str | None]
+WebColorValue: TypeAlias = Union[str, None]
 """Web color value type.
 
 Always a web-style hexadecimal color string (e.g. ``"#xxxxxx"``).
 """
 
-WebColorType: TypeAlias = Union[WebColorValue | tuple[WebColorValue, WebColorValue]]
+WebColorType: TypeAlias = Union[WebColorValue, tuple[WebColorValue, WebColorValue]]
 """Web color type.
 
 This value can specify both a foreground and a background color using a
@@ -88,23 +88,33 @@ class TextStyles(BaseModel):
 
     Attributes
     ----------
-    prompt_string : :type:`TextStyle`, optional
+    prompt_string : TextStyle or None, optional
         Style for the prompt string.
-    input : :type:`TextStyle`, optional
+    tool_prompt_string : TextStyle or None, optional
+        Style for tool permission prompts.
+    input : TextStyle or None, optional
         Style for user input text/prompt.
-    thinking : :type:`TextStyle`, optional
+    tool_input : TextStyle or None, optional
+        Style for tool input text.
+    welcome_message : TextStyle or None, optional
+        Style for the welcome message.
+    llm_thinking : TextStyle or None, optional
         Style for the assistant's thinking output.
-    thinking_em : :type:`TextStyle`, optional
-        Style for emphasized thinking text.
-    response : :type:`TextStyle`, optional
+    llm_id : TextStyle or None, optional
+        Style for LLM message IDs.
+    llm_tool_call : TextStyle or None, optional
+        Style for LLM tool calls.
+    llm_tool_output : TextStyle or None, optional
+        Style for LLM tool output.
+    response : TextStyle or None, optional
         Style for the assistant's response text.
-    output : :type:`TextStyle`, optional
+    output : TextStyle or None, optional
         Style for general output (e.g. command) text.
-    output_error : :type:`TextStyle`, optional
+    output_error : TextStyle or None, optional
         Style for error output text.
-    warning : :type:`TextStyle`, optional
+    warning : TextStyle or None, optional
         Style for application level warning messages.
-    error : :type:`TextStyle`, optional
+    error : TextStyle or None, optional
         Style for application level error messages.
     """
     # Default values must be always None!

@@ -14,14 +14,34 @@ __all__ = ["Terminal"]
 #>    y2: int
 
 class Terminal(Lifecycle):
+    """Abstract base class for terminal implementations.
+
+    Provides an interface for terminal input/output operations with
+    theme support and history management.
+    """
+
     @property
     @abstractmethod
     def width(self) -> int:
+        """Width of the terminal in characters.
+
+        Returns
+        -------
+        int
+            Terminal width.
+        """
         ...
 
     @property
     @abstractmethod
     def height(self) -> int:
+        """Height of the terminal in characters.
+
+        Returns
+        -------
+        int
+            Terminal height.
+        """
         ...
 
 #>    @abstractmethod
@@ -30,10 +50,24 @@ class Terminal(Lifecycle):
 
     @abstractmethod
     def set_history(self, history: list[str]) -> None:
+        """Set the command history.
+
+        Parameters
+        ----------
+        history : list[str]
+            List of history entries to load.
+        """
         ...
 
     @abstractmethod
     def set_theme(self, theme: Theme) -> None:
+        """Apply a color theme to the terminal.
+
+        Parameters
+        ----------
+        theme : Theme
+            Theme configuration to apply.
+        """
         ...
 
     @abstractmethod
@@ -42,10 +76,24 @@ class Terminal(Lifecycle):
         prompt: str,
         *,
         style: str | None = None,
-#>        format: TextFormat | None = None,
-#>        pane: str = "main",
         **kwargs: Any,
     ) -> str:
+        """Read a line of input from the user.
+
+        Parameters
+        ----------
+        prompt : str
+            Prompt string to display.
+        style : str or None, optional
+            Style name to apply to the prompt, by default None.
+        **kwargs : Any
+            Additional arguments passed to the underlying implementation.
+
+        Returns
+        -------
+        str
+            The user's input line.
+        """
         ...
 
     async def ainput(
@@ -53,50 +101,78 @@ class Terminal(Lifecycle):
         prompt: str,
         *,
         style: str | None = None,
-#>        format: TextFormat | None = None,
-#>        pane: str = "main",
         **kwargs: Any,
     ) -> str:
+        """Asynchronously read a line of input from the user.
+
+        Parameters
+        ----------
+        prompt : str
+            Prompt string to display.
+        style : str or None, optional
+            Style name to apply to the prompt, by default None.
+        **kwargs : Any
+            Additional arguments passed to the underlying implementation.
+
+        Returns
+        -------
+        str
+            The user's input line.
+        """
         return await asyncio.to_thread(
             self.input,
             prompt=prompt,
             style=style,
-#>            format=format,
-#>            pane=pane,
         )
 
     def print(
         self,
         *args: Any,
         smart_end: str | None = None,
-#>        max_lines: int | None = None,
-#>        indent: int = 0,
         style: str | None = None,
-#>        format: TextFormat | None = None,
-#>        pane: str = "main",
         **kwargs: Any,
     ) -> None:
+        """Print output to the terminal.
+
+        Parameters
+        ----------
+        *args : Any
+            Objects to print.
+        smart_end : str or None, optional
+            Ending string if the last argument doesn't already end with it,
+            by default None.
+        style : str or None, optional
+            Style name to apply to the output, by default None.
+        **kwargs : Any
+            Additional arguments passed to the underlying implementation.
+        """
         ...
 
     async def aprint(
         self,
         *args: Any,
         smart_end: str | None = None,
-#>        max_lines: int | None = None,
-#>        indent: int = 0,
         style: str | None = None,
-#>        format: TextFormat | None = None,
-#>        pane: str = "main",
         **kwargs: Any,
     ) -> None:
+        """Asynchronously print output to the terminal.
+
+        Parameters
+        ----------
+        *args : Any
+            Objects to print.
+        smart_end : str or None, optional
+            Ending string if the last argument doesn't already end with it,
+            by default None.
+        style : str or None, optional
+            Style name to apply to the output, by default None.
+        **kwargs : Any
+            Additional arguments passed to the underlying implementation.
+        """
         return await asyncio.to_thread(
             self.print,
             *args,
             smart_end=smart_end,
-#>            max_lines=max_lines,
-#>            indent=indent,
             style=style,
-#>            format=format,
-#>            pane=pane,
             **kwargs,
         )

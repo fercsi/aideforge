@@ -75,35 +75,32 @@ class CliCallbackHandler(AgentCallbackHandler, BaseCallbackHandler):
         **kwargs : Any
             Additional keyword arguments passed by the callback framework.
         """
-        try:
-            thinking = self._shared.settings["display.thinking"]
-            if thinking == ThinkingOption.OFF:
-                return
-            terminal = self._shared.terminal
-            assert terminal is not None, "on_llm_end: terminal has not been initialized."
-            show_text = thinking in (ThinkingOption.TEXT, ThinkingOption.ALL, ThinkingOption.DETAILS)
-            show_tool = thinking in (ThinkingOption.TOOL, ThinkingOption.ALL, ThinkingOption.DETAILS)
-            show_details = thinking == ThinkingOption.DETAILS
+        thinking = self._shared.settings["display.thinking"]
+        if thinking == ThinkingOption.OFF:
+            return
+        terminal = self._shared.terminal
+        assert terminal is not None, "on_llm_end: terminal has not been initialized."
+        show_text = thinking in (ThinkingOption.TEXT, ThinkingOption.ALL, ThinkingOption.DETAILS)
+        show_tool = thinking in (ThinkingOption.TOOL, ThinkingOption.ALL, ThinkingOption.DETAILS)
+        show_details = thinking == ThinkingOption.DETAILS
 
-            assert len(response.generations) > 0, "on_llm_end: Response does not have generations."
-            for gen in response.generations[0]:  # currently, no multiple prompts
-                # there won't be multiple response variants, but who knows
-                terminal.print()
-                msg = gen.message
-                if show_details:
-                    terminal.print(f"{type(msg).__name__} <{msg.id}>", style="llm_id")
-                if show_text:
-                    akwa = getattr(msg, "additional_kwargs", {})
-                    if "reasoning_content" in akwa:
-                        terminal.print(f"Thinking: {akwa['reasoning_content']}", style="llm_thinking")
-                if show_tool and msg.tool_calls:
-                    terminal.print("Tool calls:", style="llm_tool_call")
-                    for tc in msg.tool_calls:
-                        args = ", ".join(f"{k}={v!r}" for k, v in tc["args"].items())
-                        idtxt = f"[{tc['id']}] " if show_details else ""
-                        terminal.print(f"  {idtxt}{tc['name']}({args})", style="llm_tool_call")
-        except Exception as exc:
-            print(exc)
+        assert len(response.generations) > 0, "on_llm_end: Response does not have generations."
+        for gen in response.generations[0]:  # currently, no multiple prompts
+            # there won't be multiple response variants, but who knows
+            terminal.print()
+            msg = gen.message
+            if show_details:
+                terminal.print(f"{type(msg).__name__} <{msg.id}>", style="llm_id")
+            if show_text:
+                akwa = getattr(msg, "additional_kwargs", {})
+                if "reasoning_content" in akwa:
+                    terminal.print(f"Thinking: {akwa['reasoning_content']}", style="llm_thinking")
+            if show_tool and msg.tool_calls:
+                terminal.print("Tool calls:", style="llm_tool_call")
+                for tc in msg.tool_calls:
+                    args = ", ".join(f"{k}={v!r}" for k, v in tc["args"].items())
+                    idtxt = f"[{tc['id']}] " if show_details else ""
+                    terminal.print(f"  {idtxt}{tc['name']}({args})", style="llm_tool_call")
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> None:
         """Handle the end-of-tool-execution event by printing colorized output.
@@ -183,6 +180,9 @@ class Cli:
     callback_handler : type[BaseCallbackHandler], optional
         The callback handler class to use for observing LLM execution,
         by default :class:`CliCallbackHandler`.
+    terminal : Terminal or None, optional
+        The terminal instance to use for input and output. If not provided,
+        a RichTerminal is created.
     """
 
     def __init__(
@@ -389,10 +389,36 @@ class Cli:
             _color_print(colors.tool_prompt_string, ps_err, end="")
 
 class PsActionResolver(TemplateResolver):
+    """Template resolver for action approval prompts.
+
+    Resolves template variables for tool name and arguments in the
+    tool approval prompt string.
+
+    Parameters
+    ----------
+    request : ActionRequest
+        The action request containing the tool name and arguments.
+    """
+
     def __init__(self, request: ActionRequest) -> None:
         self._request = request
 
     def resolver(self, var: str, fmt: str = "") -> str|None:
+        """Resolve a template variable for the action prompt.
+
+        Parameters
+        ----------
+        var : str
+            The variable name to resolve (e.g., "tool", "args").
+        fmt : str, optional
+            Format specifier for the variable (e.g., "pretty", "json,2"),
+            by default "".
+
+        Returns
+        -------
+        str or None
+            The resolved value, or None if the variable or format is not recognized.
+        """
         # if var or fmt is not valid, None must be returned without raising an error
         # {tool}
         # {arga:min} = {args}
@@ -425,6 +451,19 @@ class PsActionResolver(TemplateResolver):
         return None
 
 def _eval_answer(answer: str) -> ApprovalDecision | None:
+    """Evaluate the user's answer to an action approval prompt.
+
+    Parameters
+    ----------
+    answer : str
+        The user's input string.
+
+    Returns
+    -------
+    ApprovalDecision or None
+        The corresponding approval decision, or None if the input
+        is not recognized.
+    """
     answer = answer.strip().lower()
     if answer in ("y", "yes", "approve"):
         return ApprovalDecision.APPROVE

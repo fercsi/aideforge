@@ -9,12 +9,17 @@ from rich.console import Console as RichConsole
 from rich.style import Style as RichStyle
 from rich.theme import Theme as RichTheme, ThemeStackError
 from aideforge.abc.terminal import Terminal
-from aideforge.structs.theme import TextStyle, Theme
+from aideforge.structs.theme import DecorationType, TextStyle, Theme
 
 __all__ = ["RichTerminal"]
 
 
 class RichTerminal(RichConsole, Terminal):
+    """Rich-based terminal implementation.
+
+    Extends Rich Console with history management and theme support.
+    """
+
     def __init__(
         self,
         *,
@@ -25,6 +30,19 @@ class RichTerminal(RichConsole, Terminal):
         history: list[str] | None = None,
         use_markup: bool = False,
     ) -> None:
+        """Initialize the Rich terminal.
+
+        Parameters
+        ----------
+        color_system : Literal["auto", "standard", "256", "truecolor", "windows"], optional
+            Color system to use, by default "auto".
+        theme : Theme or None, optional
+            Theme to apply, by default None.
+        history : list[str] or None, optional
+            Command history to load, by default None.
+        use_markup : bool, optional
+            Whether to use Rich markup for rendering, by default False.
+        """
         # Rich theme is stacked. We use a single theme always, replacable
         # So set empty theme to the bottom
         RichConsole.__init__(
@@ -39,12 +57,26 @@ class RichTerminal(RichConsole, Terminal):
         self._use_markup = use_markup
 
     def set_history(self, history: list[str]) -> None:
+        """Set the command history.
+
+        Parameters
+        ----------
+        history : list[str]
+            List of history entries to load.
+        """
         readline.clear_history()
         for item in history:
             readline.add_history(item)
         readline.set_auto_history(True)
 
     def set_theme(self, theme: Theme) -> None:
+        """Apply a color theme to the terminal.
+
+        Parameters
+        ----------
+        theme : Theme
+            Theme configuration to apply.
+        """
         rich_theme = _to_rich_theme(theme)
         try:
             self.pop_theme()
@@ -53,6 +85,22 @@ class RichTerminal(RichConsole, Terminal):
         self.push_theme(rich_theme)
 
     def input(self, prompt: str, *, style: str | None = None, **kwargs) -> str:
+        """Read a line of input from the user.
+
+        Parameters
+        ----------
+        prompt : str
+            Prompt string to display.
+        style : str or None, optional
+            Style name to apply to the prompt, by default None.
+        **kwargs : Any
+            Additional arguments passed to the underlying implementation.
+
+        Returns
+        -------
+        str
+            The user's input line.
+        """
         use_markup = kwargs.setdefault("markup", self._use_markup)
         if not use_markup:
             prompt = markup.escape(prompt)
@@ -72,6 +120,18 @@ class RichTerminal(RichConsole, Terminal):
         return RichConsole.input(self, prompt)
 
     def print(self, *args, smart_end: str | None = None, **kwargs) -> None:
+        """Print output to the terminal.
+
+        Parameters
+        ----------
+        *args : Any
+            Objects to print.
+        smart_end : str or None, optional
+            Ending string if the last argument doesn't already end with it,
+            by default None.
+        **kwargs : Any
+            Additional arguments passed to the underlying implementation.
+        """
         if smart_end:
             if not isinstance(args[-1], str) or not args[-1].endswith(
                 smart_end
@@ -99,8 +159,20 @@ class RichTerminal(RichConsole, Terminal):
 
 
 def _to_rich_theme(theme: Theme) -> RichTheme:
+    """Convert a Theme to a Rich Theme.
+
+    Parameters
+    ----------
+    theme : Theme
+        Theme to convert.
+
+    Returns
+    -------
+    RichTheme
+        Rich-compatible theme.
+    """
     styles = theme.text_styles
-    rich_styles = { # some basic style components
+    rich_styles = {  # some basic style components
         "bold": RichStyle(bold=True),
         "italic": RichStyle(italic=True),
         "underline": RichStyle(underline=True),
@@ -115,6 +187,18 @@ def _to_rich_theme(theme: Theme) -> RichTheme:
 
 
 def _to_rich_style(style: TextStyle) -> RichStyle:
+    """Convert a TextStyle to a Rich Style.
+
+    Parameters
+    ----------
+    style : TextStyle
+        TextStyle to convert.
+
+    Returns
+    -------
+    RichStyle
+        Rich-compatible style.
+    """
     rich_style = {}
     if style.color is not None:
         if isinstance(style.color, int):
