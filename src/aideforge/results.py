@@ -307,7 +307,7 @@ class LlmResponse(BaseModel):
 #: - ``CommandError``
 #: - ``LlmError``
 PromptError = Annotated[
-    CommandError | LlmError, Field(descriminator="error_code")
+    CommandError | LlmError, Field(discriminator="error_code")
 ]
 
 #: PromptResult
@@ -321,5 +321,5 @@ PromptError = Annotated[
 #: - ``CommandSuccess``
 #: - ``CommandError``
 PromptResult = Annotated[
-    LlmResponse | CommandSuccess | PromptError, Field(descriminator="status")
+    LlmResponse | CommandSuccess | PromptError, Field(discriminator="status")
 ]

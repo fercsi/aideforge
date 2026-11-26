@@ -3,7 +3,7 @@ from typing import Any, ClassVar, Literal, cast, get_args
 
 from pydantic import BaseModel, Field
 
-from aideforge.utils import IdType, id_to_timestamp
+from aideforge.utils import IdType, id_to_timestamp, create_id
 
 __all__ = [
     "BaseEvent",
@@ -89,7 +89,7 @@ class BaseStruct(BaseModel):
                 f" 'created_at' because '{prop_name}' is missing."
             )
 
-        return id_to_timestamp(self.event_id)
+        return id_to_timestamp(id)
 
 
 class BaseEvent(BaseStruct):
@@ -207,7 +207,7 @@ class ChangeProperty(BaseEvent):
         elif self.change_type in PROPERTY_CHANGE_METHODS:
             # Dynamically call the corresponding method on current_value
             # (e.g., append, extend, update)
-            getattr(current_value, change_type)(new_value)
+            getattr(current_value, self.change_type)(self.new_value)
         else:
             raise ValueError(f"Unsupported change type: {self.change_type}")
 

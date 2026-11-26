@@ -327,7 +327,7 @@ class SettingsGroup:
         name = settings.domain
         if not hasattr(self, name) or override:
             settings.set_storage(self._storage)
-            for prim in settings.model_fields:
+            for prim in type(settings).model_fields:
                 if prim in settings.type_fields:
                     continue
                 self._settings[prim] = settings
@@ -497,7 +497,7 @@ class SettingsGroup:
         if isinstance(item, BaseSettings):
             return list(set(item.model_fields) - set(item.type_fields))
         elif isinstance(item, BaseModel):
-            return item.model_fields.copy()
+            return type(item).model_fields.copy()
         elif isinstance(item, dict):
             return list(item.keys())
         elif isinstance(item, StrEnum):

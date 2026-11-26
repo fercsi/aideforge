@@ -80,7 +80,7 @@ class ToolConfig(BaseStruct, ToolModeConfig):
     """*Model metadata*.
     Storage scope. ``"global"`` means tools are shared across users.
     """
-    storage_name: ClassVar[str] = "{struct.name}"
+    storage_name: ClassVar[str] = "{struct.type}"
     """*Model metadata*.
     Format string for storage name, interpolated with the struct instance.
     """

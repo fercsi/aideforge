@@ -63,7 +63,7 @@ class MemoryStorage(AbstractStorage):
             The retrieved content, or ``None`` if not found
             and ``ignore_failure`` is ``True``.
         """
-        if path not in MemoryStorage:
+        if path not in MemoryStorage._resources:
             if ignore_failure:
                 return None
             else:
@@ -158,19 +158,23 @@ class MemoryStorage(AbstractStorage):
         increment: BaseEvent,
         *,
         struct_name: str | None = None,
+        ignore_failure: bool = False,
     ) -> None:
         """Stores an increment to an incrementally stored struct
 
         Parameters
         ----------
-        struct : BaseStruct
+        struct : BaseIncrementalStruct
             The BaseStruct instance to store.
-        increment : BaseStruct
-            The BaseStruct increment instance to store within ``struct`'s
+        increment : BaseEvent
+            The BaseEvent increment instance to store within ``struct``'s
             scope.
         struct_name : str or None
             Name under which the struct is stored.  When ``None``, a
             default name is derived from ``struct.storage_name``.
+        ignore_failure : bool
+            When ``True``, return instead of raising if the struct
+            cannot be found.
         """
         category, struct_name = _get_struct_keys(struct, struct_name)
         structs = MemoryStorage._structs
@@ -182,11 +186,11 @@ class MemoryStorage(AbstractStorage):
                 return None
             else:
                 raise FileNotFoundError(
-                    f"'{struct_name}' of type {struct_type.__name__} not found."
+                    f"'{struct_name}' of type {type(struct).__name__} not found."
                 )
-        struct.events.append(event)
-        if event.type == "change-property":
-            chprop = cast(ChangeProperty, event)
+        struct.events.append(increment)
+        if increment.event_type == "change-property":
+            chprop = cast(ChangeProperty, increment)
             chprop.change(struct)
 
     def list_structs(self, struct_type: type[BaseStruct]) -> list[str]:
@@ -213,14 +217,15 @@ class MemoryStorage(AbstractStorage):
         self, store_id: str | None = None
     ) -> AgentCheckpointStoreProtocol:
         _ = store_id
-        return MemoryStorage.checkpoint_store
+        return MemoryStorage._checkpoint_store
 
 
 def _get_struct_keys(
     struct: StructT | type[StructT],
     struct_name: str | None = None,
 ) -> tuple[str, str]:
+    proxy = StructProxy(struct)
     if struct_name is None:
-        struct_name = struct.storage_name.format(struct=StructProxy(struct))
-    category = struct.kinds or struct.kind
+        struct_name = struct.storage_name.format(struct=proxy)
+    category = proxy.kinds or proxy.kind
     return category, struct_name

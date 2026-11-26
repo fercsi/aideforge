@@ -72,8 +72,8 @@ class LlmConfig(BaseStruct):
     def _hashable(value: Any) -> Any:
         if isinstance(value, dict):
             return frozenset(
-                (key, MyModel._hashable(val)) for key, val in value.items()
+                (key, LlmConfig._hashable(val)) for key, val in value.items()
             )
         if isinstance(value, list):
-            return tuple(MyModel._hashable(v) for v in value)
+            return tuple(LlmConfig._hashable(v) for v in value)
         return value
