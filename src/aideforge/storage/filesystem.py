@@ -123,14 +123,14 @@ class FileSystemStorage(AbstractStorage):
             raise ValueError(f"Invalid retrieve mode '{mode}'")
         if path[0].isalpha():
             path = "%/" + path
-        alternatives = self._search_struct_path_alternatives(self, path)
+        alternatives = self._search_struct_path_alternatives(path)
         if not alternatives:
             if ignore_failure:
                 return None
             else:
                 raise FileNotFoundError(f"Resource '{path}' not found.")
         try:
-            with open(file, f"r{mode}") as f:
+            with open(alternatives[0], f"r{mode}") as f:
                 content = f.read()
             return content
         except OSError:
@@ -146,10 +146,11 @@ class FileSystemStorage(AbstractStorage):
         *,
         ignore_failure: bool = False,
     ) -> None:
-        path = self._get_path(struct, struct_name)
+        file_path = self._get_path(None, path)
         mode = "wt" if isinstance(content, str) else "wb"
         try:
-            with open(file, mode) as f:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, mode) as f:
                 f.write(content)
         except OSError:
             if ignore_failure:
@@ -182,7 +183,13 @@ class FileSystemStorage(AbstractStorage):
                 )
         if isinstance(data, list):  # incremental data
             struct = struct_type.model_validate(data[0])
-            events = [BaseEvent.model_validate(e) for e in data[1:]]
+            events = []
+            for e in data[1:]:
+                # TODO: Fix this part if event registration is ready
+                if e.get("event_type") == "change-property":
+                    events.append(ChangeProperty.model_validate(e))
+                else:
+                    events.append(BaseEvent.model_validate(e))
             self._resolve_incremental(struct, events)
         else:
             struct = struct_type.model_validate(data)
@@ -202,6 +209,10 @@ class FileSystemStorage(AbstractStorage):
         struct_name: str | None = None,
     ) -> None:
         path = self._get_path(struct, struct_name)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Struct '{struct_name}' not found for incremental update."
+            )
         self._append_struct_increment(struct, increment, path)
 
     def list_structs(self, struct_type: type[BaseStruct]) -> list[str]:
@@ -303,7 +314,7 @@ class FileSystemStorage(AbstractStorage):
     ) -> None:
         for event in events:
             struct.events.append(event)
-            if event.type != "change-property":
+            if event.event_type != "change-property":
                 continue
             chprop = cast(ChangeProperty, event)
             chprop.change(struct)
@@ -314,6 +325,7 @@ class FileSystemStorage(AbstractStorage):
         if struct_name is None:
             struct_name = struct.storage_name.format(struct=struct)
         ext = self.struct_format.lower()
+        # storage_mode = getattr(struct, 'storage_mode', 'snapshot')
         if struct and struct.storage_mode == "incremental" and ext == "json":
             ext = "jsonl"
         if struct is None:
@@ -354,9 +366,13 @@ class FileSystemStorage(AbstractStorage):
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         ext = self.struct_format.lower()
+        # storage_mode = getattr(struct, 'storage_mode', 'snapshot')
+        storage_mode = struct.storage_mode
         if ext == "json":
-            indent = None if struct.storage_mode == "incremental" else 2
+            indent = None if storage_mode == "incremental" else 2
             json_str = struct.model_dump_json(indent=indent, **EXCLUSIONS)
+            if storage_mode == "incremental":
+                json_str += "\n"
             path.write_text(
                 json_str,
                 encoding="utf-8",

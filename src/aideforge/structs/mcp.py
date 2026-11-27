@@ -1,6 +1,8 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from .abc import BaseStruct
 
 __all__ = [
     "McpHttpServerConfig",
@@ -9,7 +11,7 @@ __all__ = [
 ]
 
 
-class McpHttpServerConfig(BaseModel):
+class McpHttpServerConfig(BaseStruct):
     """Configuration for an HTTP-based MCP (Model Context Protocol) server."""
 
     kind: Literal["mcp_server"] = Field(
@@ -30,7 +32,7 @@ class McpHttpServerConfig(BaseModel):
     url: str = Field(..., description="HTTP URL of the MCP server endpoint.")
 
 
-class McpStdioServerConfig(BaseModel):
+class McpStdioServerConfig(BaseStruct):
     """Configuration for a stdio-based MCP (Model Context Protocol) server."""
 
     kind: Literal["mcp_server"] = Field(

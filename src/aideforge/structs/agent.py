@@ -3,6 +3,7 @@ from typing import Any, ClassVar, Literal, Self
 from pydantic import BaseModel, Field, model_validator
 
 from aideforge.tools import ToolPolicy
+from .abc import BaseStruct
 from .llm import LlmConfig
 from .mcp import McpServerConfig
 from .tool import ToolConfig
@@ -93,7 +94,7 @@ class ContextInfo(ContextConfig):
     )
 
 
-class AgentConfig(BaseModel):
+class AgentConfig(BaseStruct):
     """Configuration for an AI agent."""
 
     kind: Literal["agent"] = Field(

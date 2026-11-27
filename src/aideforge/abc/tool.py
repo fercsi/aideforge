@@ -1,4 +1,4 @@
-from typing import ClassVar, Protocol
+from typing import Protocol
 
 __all__ = [
     "AgentToolProtocol",
@@ -10,7 +10,7 @@ class AgentToolProtocol(Protocol):
 
     Any tool used by an agent must implement this protocol to be discoverable
     and manageable by the agent runtime. The minimum requirements are a
-    ``name`` and ``description`` class variable.
+    ``name`` and ``description`` variable.
 
     .. note::
        Tools built on LangChain's ``BaseTool`` meet this requirement and can be
@@ -29,5 +29,5 @@ class AgentToolProtocol(Protocol):
         ``"Search the web for information"``).
     """
 
-    name: ClassVar[str]
-    description: ClassVar[str]
+    name: str
+    description: str

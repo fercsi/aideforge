@@ -48,7 +48,8 @@ class AgentBlueprint(AbstractAgentBlueprint):
                 name = tool.model_fields["name"].default
                 self._tools[name] = tool
             elif isinstance(tool, PreconfiguredTool):
-                self._tools[tool.name] = tool
+                name = tool.tool.model_fields["name"].default
+                self._tools[name] = tool
             elif callable(tool):
                 tool = StructuredTool.from_function(tool)
                 self._tools[tool.name] = tool
