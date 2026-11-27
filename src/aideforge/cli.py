@@ -403,7 +403,7 @@ class PsActionResolver(TemplateResolver):
     def __init__(self, request: ActionRequest) -> None:
         self._request = request
 
-    def resolver(self, var: str, fmt: str = "") -> str|None:
+    def resolve(self, var: str, fmt: str = "") -> str|None:
         """Resolve a template variable for the action prompt.
 
         Parameters

@@ -221,9 +221,9 @@ def _to_rich_style(style: TextStyle) -> RichStyle:
         rich_style["underline2"] = False
         rich_style["strike"] = False
         rich_style["overline"] = False
-        if style["decoration"] == DecorationType.UNDERLINE:
+        if style.decoration == DecorationType.UNDERLINE:
             rich_style["underline"] = True
-        elif style.decoration == DecorationType.UNDERLINE2:
+        elif style.decoration == DecorationType.DOUBLE_LINE:
             rich_style["underline2"] = True
         elif style.decoration == DecorationType.LINE_THROUGH:
             rich_style["strike"] = True
